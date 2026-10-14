@@ -18,21 +18,28 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 ## Step 0: Protocol and Pre-registration
 
-- [ ] Write `configs/protocol.yaml` with the seeds, the split definitions, the metrics, and the statistical test. Freeze it before Step 1.
-- [ ] Do not set numeric targets now. There are no measurements yet. Use these open criteria:
-  - [ ] An improvement is "statistically reliable" only if the 95% paired bootstrap CI of the difference to A excludes 0 on all 3 seeds together.
-  - [ ] Report every effect size with its CI. Do not call an effect "large" or "small" without a reference value.
-  - [ ] Mobile: measure and report model size, peak RAM, p50/p95 latency, and the INT8 accuracy loss. Name the Android device now, so that all measurements use the same device.
-  - [ ] Optional: after Step 5 measures A, you can add numeric targets for B, C, and D. Record the date of the change in `protocol.yaml` and in the paper.
-- [ ] Check the license of each dataset (RuleTaker, ProofWriter, and others) on the official source. Record the results in `DATA_LICENSES.md`. Do not use a mirror license label as the source.
-- [ ] Write a short literature review (instruction-conditioned hypernetworks such as HyperTuning and HINT; counterfactual consistency training; rule reasoning with RuleTaker and ProofWriter). Record which CRUX parts are novel and which parts are not novel.
-- [ ] Name the external baselines: fine-tuned Ettin-32M and fine-tuned DeBERTa-v3-xsmall. Jev has no public weights. Compare against Jev only if you get API access, only on public tasks, and label the result "API, not reproducible".
-- [ ] Use these external benchmarks for Jev-type decisions. Use them for evaluation only. Do not train on them, except in a separate and labeled fine-tune experiment.
-  - [ ] **BoardgameQA** (Google, NeurIPS 2023): facts, rules, exceptions, and rule priorities → proved / disproved / unknown. It tests the same rule types as the Step 3 generator, but with text from a different source.
-  - [ ] **DynaBench** (DynaGuard paper, 2025): a user-defined policy plus a dialogue → compliant / not compliant. The test policies are longer than the training policies and are not in the training data. This is the closest public match to Jev guardrail decisions. The test set has only 543 examples, so the CIs are wide.
-  - [ ] **Super-NaturalInstructions**, classification tasks only, official held-out task split: an instruction plus options → one option. It tests unseen instructions and a variable number of options.
-  - [ ] Confirm the license of each benchmark from its official repository and record it in `DATA_LICENSES.md`. If a license does not permit research use, remove that benchmark.
-  - [ ] Do not use ShARC: it has no known license, and published work reports spurious patterns in its labels.
+- [x] Write `configs/protocol.yaml` with the seeds, the split definitions, the metrics, and the statistical test. Freeze it before Step 1.
+- [x] Do not set numeric targets now. There are no measurements yet. Use these open criteria:
+  - [x] An improvement is "statistically reliable" only if the 95% paired bootstrap CI of the difference to A excludes 0 on all 3 seeds together.
+  - [x] Report every effect size with its CI. Do not call an effect "large" or "small" without a reference value.
+  - [x] Mobile: measure and report model size, peak RAM, p50/p95 latency, and the INT8 accuracy loss. Name the Android device now, so that all measurements use the same device.
+  - [x] Optional: after Step 5 measures A, you can add numeric targets for B, C, and D. Record the date of the change in `protocol.yaml` and in the paper.
+- [x] Check the license of each dataset (RuleTaker, ProofWriter, and others) on the official source. Record the results in `DATA_LICENSES.md`. Do not use a mirror license label as the source.
+- [x] Write a short literature review (instruction-conditioned hypernetworks such as HyperTuning and HINT; counterfactual consistency training; rule reasoning with RuleTaker and ProofWriter). Record which CRUX parts are novel and which parts are not novel.
+- [x] Name the external baselines: fine-tuned Ettin-32M and fine-tuned DeBERTa-v3-xsmall. Jev has no public weights. Compare against Jev only if you get API access, only on public tasks, and label the result "API, not reproducible".
+- [x] Use these external benchmarks for Jev-type decisions. Use them for evaluation only. Do not train on them, except in a separate and labeled fine-tune experiment.
+  - [x] **BoardgameQA** (Google, NeurIPS 2023): facts, rules, exceptions, and rule priorities → proved / disproved / unknown. It tests the same rule types as the Step 3 generator, but with text from a different source.
+  - [x] **DynaBench** (DynaGuard paper, 2025): a user-defined policy plus a dialogue → compliant / not compliant. The test policies are longer than the training policies and are not in the training data. This is the closest public match to Jev guardrail decisions. The test set has only 543 examples, so the CIs are wide.
+  - [x] **Super-NaturalInstructions**, classification tasks only, official held-out task split: an instruction plus options → one option. It tests unseen instructions and a variable number of options.
+  - [x] Confirm the license of each benchmark from its official repository and record it in `DATA_LICENSES.md`. If a license does not permit research use, remove that benchmark.
+  - [x] Do not use ShARC: it has no known license, and published work reports spurious patterns in its labels.
+
+**Done (2026-10-14, commit `21be4c8`):**
+- `configs/protocol.yaml` is frozen. Seeds: 13, 42, 2026. Bootstrap: 10000 resamples. "Reliable" means the 95% CI pooled over the 3 seed pairs excludes 0.
+- The mobile device is the Google Pixel 8 (Tensor G3, 8 GB RAM).
+- `DATA_LICENSES.md`: no benchmark is removed. The 16 Super-NaturalInstructions held-out tasks with license "Unknown" are excluded.
+- `docs/literature_review.md`: no CRUX part is novel alone. Only the combination at 17–30M parameters can be novel.
+- Project license: Apache-2.0 for the code, the weights, and the synthetic data. CC BY 4.0 for the paper, only if the venue requires it.
 
 ## Step 1: Baseline Smoke Test
 
@@ -40,7 +47,15 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Use a head that matches the labels: 2 classes for closed-world data, 3 classes (True/False/Unknown) for open-world data.
 - [ ] Compare the accuracy with the published RuleTaker results. This step only checks the training pipeline. The official A results come from Step 5, on the frozen splits.
 - [ ] Save the checkpoints, the configurations, and the training metrics.
-- [ ] Check for contamination: search the Ettin pretraining data documentation for RuleTaker and ProofWriter. Record the result.
+- [x] Check for contamination: search the Ettin pretraining data documentation for RuleTaker and ProofWriter. Record the result.
+
+**Done so far:**
+- Contamination check: `docs/contamination.md`. RuleTaker and ProofWriter are not in the Ettin documentation. The Flan data in Ettin can contain the RuleTaker tasks task966 and task967 and 115 of the 119 Super-NaturalInstructions held-out tasks. This is not confirmed.
+- Step 1 trains and evaluates on RuleTaker dev only. It does not read RuleTaker test.
+- Pipeline: `crux/train_step1.py`, `crux/data/ruletaker.py`, `configs/step1_ruletaker.yaml`, `notebooks/step1_smoke.ipynb`. Data: RuleTaker `original/depth-5` (closed world, 2 classes) from the official Ai2 zip. The config pins the SHA-256 of the zip. The loader refuses the test split.
+- The CPU smoke run (5 steps) passes end to end. Its output is deleted. It is not a result.
+- Open: the Colab T4 run. Record the dev accuracy in `docs/step1_report.md`. Reference: 99.2% test accuracy (Clark et al. 2020, RoBERTa-large). The lr 1e-4, batch 32, and 3 epochs are not tested on a GPU.
+- Carry-over to Step 4: the 3-class open-world data comes from the ProofWriter release. It has a different file format, so the loader needs an adaptation.
 
 ## Step 2: Unified Decision Schema
 
@@ -66,6 +81,11 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Record a hash for each split file, then freeze the splits.
 - [ ] Implement these metrics: accuracy, counterfactual paired accuracy, paraphrase consistency, calibration (ECE), option-order invariance, and unseen-rule accuracy.
 
+**Carry-over from earlier steps:**
+- Run an n-gram overlap check of the frozen test split against the public Ettin `tulu_flan` shards (Step 1, `docs/contamination.md`).
+- Count again the Super-NaturalInstructions tasks with license "Unknown" in the classification subset, and exclude them (Step 0).
+- Fill in the `null` split sizes, hashes, and n-gram settings in `configs/protocol.yaml` (Step 0).
+
 ## Step 5: Architecture A (Official) and Architecture B: Rule Compiler
 
 - [ ] Train the official A on the frozen train split (3 seeds).
@@ -73,6 +93,9 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Ablation: the hypernetwork also generates low-rank adapters for the top K encoder layers.
 - [ ] Control **A-param**: give A an unconditioned LoRA with the same number of trainable parameters as B. This control shows if the conditioning helps, or only the extra parameters help.
 - [ ] Train with the same data and compute budget as A. Compare the accuracy, the generalization, the latency, and the parameter count on the validation split.
+
+**Carry-over from earlier steps:**
+- Set `budget.training_steps` in `configs/protocol.yaml` before you train A. Use the same value for all configurations (Step 0).
 
 ## Step 6: Architecture C: Counterfactual Learning
 
@@ -97,6 +120,10 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Add 95% CIs and the paired bootstrap test for each comparison with A.
 - [ ] Apply the criteria from Step 0. Report all results, including the comparisons where the CI includes 0.
 
+**Carry-over from earlier steps:**
+- Limitations: A, B, C, and D share the Ettin initialization, so a contamination affects them equally. DeBERTa-v3-xsmall has different pretraining data (Step 1).
+- DynaBench has only 543 test examples, so its CIs are wide (Step 0).
+
 ## Step 9: Optimize for Mobile
 
 - [ ] Select the architecture with the best validation result, not the best test result.
@@ -105,9 +132,17 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Measure model size, peak RAM, and latency on Colab.
 - [ ] Build an Android benchmark with ONNX Runtime Mobile. Measure on the device named in Step 0, and record the device, the OS version, and the thread count.
 
+**Carry-over from earlier steps:**
+- Measure on the Google Pixel 8 only. Keep the same Android OS version for all measurements. Record the OS version and the thread count (Step 0).
+
 ## Step 10: Research Paper and Release
 
 - [ ] Use the 3-seed results from Steps 5 to 8. If you add more seeds, add them to all configurations.
 - [ ] Write a LaTeX paper about the methodology, the datasets, the architecture, the experiments, the ablations, the limitations, and the conclusions. Include negative results.
 - [ ] Release the code, the configs, the split hashes, the weights, and the data where the licenses permit.
 - [ ] Make sure that a clean Colab run of the notebooks gives the reported numbers within the seed variance.
+
+**Carry-over from earlier steps:**
+- Give attribution to ProofWriter (CC BY 4.0). Keep the MIT copyright notice of Ettin (Step 0).
+- Do not redistribute Super-NaturalInstructions instances. Release the task IDs and hashes only (Step 0).
+- Make novelty claims only for the combination of parts (Step 0, `docs/literature_review.md`).

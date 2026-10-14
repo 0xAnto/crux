@@ -1,0 +1,42 @@
+# Step 1 (smoke test): Ettin-17M on RuleTaker closed-world depth-5 data.
+# The values below are choices of the author. They fit a T4 (16 GB).
+# Step 1 checks the training pipeline only. It gives no official result.
+
+run_name: ettin17m_ruletaker_depth5_cwa
+
+model:
+  id: jhu-clsp/ettin-encoder-17m
+  attn_implementation: sdpa   # T4 has no FlashAttention 2
+
+data:
+  # Official Ai2 release, linked from https://github.com/allenai/ruletaker (README, "Dataset").
+  url: https://aristo-data-public.s3-us-west-2.amazonaws.com/ruletaker/rule-reasoning-dataset-V2020.2.5.zip
+  sha256: 080c8bca836603d9fea040e5a242bbd281f631255ca83428b7141ebf7f3deb0c   # of the zip, computed by the author on 2026-10-14
+  cache_dir: data/ruletaker        # not in git
+  # Folder inside the zip. depth-5 is the "DMax" set of Clark et al. 2020 (closed world, 2 classes).
+  variant: depth-5
+  # Label names in the order of the class ids. The number of labels comes from this list.
+  # For the open-world set use ["false", "true", "unknown"] and the open-world variant folder.
+  labels: ["false", "true"]
+  train_split: train
+  eval_split: dev                  # selection and evaluation use dev only. The code refuses "test".
+  max_train_examples: null         # null means all. A CLI override sets a small number for a smoke run.
+  max_eval_examples: null
+
+max_length: 512                    # choice: covers almost all depth-5 theories; the code logs the truncated share
+
+train:
+  seed_index: 0                    # index into seeds of configs/protocol.yaml (first seed)
+  fp16: true                       # applies only when CUDA is available
+  per_device_train_batch_size: 32  # choice: fits a T4 with room to spare
+  per_device_eval_batch_size: 128
+  learning_rate: 1.0e-4            # choice: common value for small ModernBERT-type encoders
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  lr_scheduler_type: linear
+  num_train_epochs: 3              # choice: 70k train examples, about 6.5k steps in total
+  max_steps: -1                    # -1 means use the epochs. A CLI override sets a positive number.
+  eval_steps: 1000
+  logging_steps: 100
+  save_total_limit: 2
+  dataloader_num_workers: 2

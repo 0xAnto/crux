@@ -1,0 +1,7 @@
+# Minimum dependencies for Step 1.
+# ModernBERT (the Ettin architecture) needs transformers 4.48 or later.
+torch
+transformers>=4.48
+accelerate>=1.1
+pyyaml
+pytest
