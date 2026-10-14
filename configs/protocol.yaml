@@ -1,0 +1,132 @@
+# CRUX pre-registered protocol (Step 0). Every later step reads this file.
+# Do not edit after the frozen date. The only allowed change is one amendment (see below).
+# "null" means: Step 4 or Step 5 fills the value before any training or test use.
+
+version: 1
+frozen: 2026-10-14
+
+# Step 0 allows one optional amendment after Step 5 measures A.
+# The amendment adds numeric targets for B, C, and D. Add the date of the change here and in the paper.
+amendments: []
+
+# Chosen by the author (steps.md does not fix the values).
+# Use these 3 seeds for every main configuration, every control, and every baseline.
+seeds: [13, 42, 2026]
+
+configurations:
+  main:
+    - {id: A, name: Baseline, desc: "Ettin-17M encoder with a standard decision head"}
+    - {id: B, name: Rule Compiler, desc: "A + instruction-conditioned rank-8 hypernetwork for the decision head"}
+    - {id: C, name: Counterfactual Learning, desc: "B + paired counterfactual training + consistency loss"}
+    - {id: D, name: CRUX, desc: "C + independently cacheable state and instruction representations + permutation-equivariant candidate scoring"}
+  controls:
+    - {id: A-param, desc: "A with an unconditioned LoRA; same trainable parameters as B"}
+    - {id: A+CF, desc: "A trained on the counterfactual data of C"}
+    - {id: B+CF, desc: "B trained on the counterfactual data, without the consistency loss"}
+    - {id: C+cache, desc: "Ablation of D: cacheable representations only"}
+    - {id: C+equivariant, desc: "Ablation of D: equivariant candidate scoring only"}
+  external_baselines:
+    - {id: Ettin-32M, desc: "Fine-tuned Ettin-32M"}
+    - {id: DeBERTa-v3-xsmall, desc: "Fine-tuned DeBERTa-v3-xsmall"}
+  # Optional. Jev has no public weights. Use it only if API access exists, only on public tasks.
+  optional_external:
+    - {id: Jev, access: API, tasks: public_only, label: "API, not reproducible"}
+
+budget:
+  # Equal for all configurations, controls, and baselines.
+  # Step 5 fixes this value before any training of A. Use the same value for all.
+  training_steps: null
+  data: "same frozen train split for all"
+  hyperparameter_search:
+    trials: 6
+    selection_split: validation
+
+splits:
+  # Step 4 fills the sizes, the hold-out lists, and the hashes. The rules below are fixed now.
+  # Unseen rule families: a split can use a template ID, a composition ID, a vocabulary ID,
+  # or an instruction paraphrase only if the train split does not contain it.
+  train:
+    sources: [synthetic counterfactual generator (Step 3)]
+    size: null               # filled by Step 4
+  validation:
+    use: "all model selection and all hyperparameter search"
+    # Choice: validation also holds out template IDs, so selection sees unseen rules.
+    unseen_rules: true
+    size: null               # filled by Step 4
+  test:
+    unseen_rules: true       # unseen templates, compositions, vocabulary, and paraphrases
+    unseen_instructions: true
+    heldout_only_in_test:    # reasoning depth and domain hold-outs from steps.md
+      - ProofWriter depth 5
+      - Birds-Electricity
+      - ParaRules
+    size: null               # filled by Step 4
+    frozen_in_step: 4
+    evaluate_once: true      # one evaluation, in Step 8 only
+    evaluated_in_step: 8
+  split_hash:
+    algorithm: sha256        # choice: common hash; Step 4 records one hash per split file
+    train: null
+    validation: null
+    test: null
+  evaluation_only_benchmarks:
+    # Do not train on these. Exception: a separate fine-tune experiment with its own label.
+    # Use a benchmark only if it passes the license check in DATA_LICENSES.md.
+    - {id: BoardgameQA, labels: [proved, disproved, unknown]}
+    - {id: DynaBench, n_test: 543, note: "small test set; CIs are wide"}
+    - {id: Super-NaturalInstructions, tasks: classification_only, split: official_heldout_tasks, exclude_instance_license: [Unknown]}   # see DATA_LICENSES.md
+  excluded:
+    - {id: ShARC, reason: "no known license; published work reports spurious label patterns"}
+  leakage:
+    shared_template_ids: forbidden      # train vs validation vs test
+    near_duplicate_check: ngram_overlap # train vs validation vs test, and train vs benchmarks
+    ngram_n: null            # filled by Step 4
+    max_overlap: null        # filled by Step 4
+    on_violation: "remove the example from the evaluation split, then re-check"
+    # Step 4 checks the split automatically before it records the hashes.
+
+metrics:
+  primary:
+    - unseen_rule_accuracy         # held-out rule generalization
+    - counterfactual_paired_accuracy  # counterfactual decision accuracy
+  secondary:
+    - accuracy
+    - macro_f1                     # for tasks with class labels
+    - paraphrase_consistency
+    - ece                          # calibration (lower is better)
+    - option_order_invariance
+  report_with_every_result:
+    - params_total
+    - params_trainable
+
+statistics:
+  across_seeds: mean_std
+  std_ddof: 1                      # choice: sample standard deviation
+  difference_vs: A                 # every comparison uses the same seed of A as the pair
+  bootstrap:
+    type: paired
+    resamples: 10000               # choice: common value
+    seed: 20261014                 # choice: the frozen date
+    ci_level: 0.95
+    unit: example                  # resample examples; the statistic is the mean difference over the 3 seed pairs
+  statistically_reliable: "the 95% CI of the difference to A excludes 0 on all 3 seeds together"
+  report_effect_size_with_ci: true
+  size_labels: forbidden           # no "large" or "small" without a reference value
+  numeric_targets: none            # an amendment can add them after Step 5
+
+mobile:
+  device: Google Pixel 8 (Tensor G3, 8 GB RAM)   # one device for all mobile measurements
+  runtime: ONNX Runtime Android
+  metrics:
+    - model_size
+    - peak_ram
+    - latency_p50
+    - latency_p95
+    - int8_accuracy_loss           # INT8 vs FP32, on the validation split
+  measurement:
+    # Choices (steps.md fixes only batch size 1): common practice values.
+    batch_size: 1
+    warmup_runs: 20
+    timed_runs: 200
+    threads: 4
+  record: [device, os_version, threads]
