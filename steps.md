@@ -73,12 +73,30 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 ## Step 3: Counterfactual Dataset Generator
 
-- [ ] Build a deterministic synthetic generator that supports logical rules, negations, thresholds, exceptions, priorities, and multi-step dependencies.
-- [ ] Give each example a template ID, a composition ID, and a vocabulary ID. Step 4 uses these IDs to make the splits.
-- [ ] Generate 100K labeled examples with matched counterfactual pairs. A pair changes one fact or one rule, and the label changes or stays the same as the rule engine computes.
-- [ ] Include multi-choice examples with 2 to 8 options. Without these, Step 7 cannot measure the effect of candidate scoring.
-- [ ] Generate paraphrases of the instructions that are logically equivalent.
-- [ ] Validate every label with an executable symbolic rule engine. Reject an example if the engine and the generator disagree.
+- [x] Build a deterministic synthetic generator that supports logical rules, negations, thresholds, exceptions, priorities, and multi-step dependencies.
+- [x] Give each example a template ID, a composition ID, and a vocabulary ID. Step 4 uses these IDs to make the splits.
+- [x] Generate 100K labeled examples with matched counterfactual pairs. A pair changes one fact or one rule, and the label changes or stays the same as the rule engine computes.
+- [x] Include multi-choice examples with 2 to 8 options. Without these, Step 7 cannot measure the effect of candidate scoring.
+- [x] Generate paraphrases of the instructions that are logically equivalent.
+- [x] Validate every label with an executable symbolic rule engine. Reject an example if the engine and the generator disagree.
+
+**Done (2026-10-15):**
+- Spec: `docs/generator_spec.md`. Open world, classical negation, exceptions block, pairwise priorities. 32 compositions of 5 rule types (`conj`, `neg`, `thr`, `exc`, `pri`). 7 are held out, stratified by the number of rule types: val c05, c08, c11, c23; test c18, c28, c31. 15 templates, 12 vocabulary pools. Block partition 0.8 / 0.1 / 0.1.
+- Output: `data/processed/synthetic/main/` has 100,000 records (train 79,808, val 10,106, test 10,086), 66,583 theories, and 33,292 units (1 of 33,293 planned units failed). 69,930 records are binary and 30,070 are multi-choice (2 to 8 options). The flip share of the pairs is 0.600. The fill rate of each cell is 0.988 or more. Two runs give the same SHA-256 (`all.jsonl` da6534cc…, `theories.jsonl` 19f65d0e…).
+- The rule engine (`crux/gen/engine.py`) and the generator (`crux/gen/generator.py`) are independent implementations. They agree on all 100K records (0 disagreements) and on 70K random fuzz theories.
+- `crux/gen/audit.py` checks shortcuts and invariants against fixed thresholds. All 41 checks pass on the final data. All 310 tests pass.
+- Fact construction: after the fact search, a Metropolis-Hastings walk draws again the facts of the queried entity that a condition reads (section 9.5). Without it, the facts on the query path depended on the label in a different way in each composition, and a fact-count probe trained on the train block scored 0.29 on the val block (chance 0.33). The free facts are random (an earlier fact controller hid an off-path cue and did not remove it).
+- Changes of the spec targets after the first 100K runs (reasons in `docs/generator_spec.md`, section 9.2):
+  - The binary label target ± 0.03 applies to the orig records at depth 1 or more (train: 0.333 / 0.334 / 0.333). All records have ± 0.05 (train: 0.321 / 0.323 / 0.357 Unknown). A depth-0 Unknown cannot flip, and 7 compositions have no True↔False flip. Balancing the totals would make the orig label show the flip status.
+  - `exception_remove` and `priority_swap` have the target ≥ 0.005 of the pairs (realized 0.010 and 0.011). The other types keep ≥ 0.05.
+  - `max_attempts` is 200 (was 100). With the walk, c11 at depth 5 (binary) filled only 0.94 of its cell.
+- Changes of the audit:
+  - The lower bound of the model checks uses the chance agreement of the predictions, not the shuffled-label null (`label_cue.bow.ood`: acc 0.321, null 0.367, chance 0.327).
+  - The label probes split the facts of the queried entity at the query path. `label_cue.path` and `label_cue.ref` compare the data with a label-blind reference (the facts on the path drawn at random and labeled again), for the orig and the edit records, with an upper limit (+0.03) and a lower limit (chance − 0.03).
+  - The count and text probes shuffle the null labels within each composition. The plain count probe runs on the orig records only. The plain probes `label_cue.counts` (all records) and `label_cue.counts_edit` are removed: an edit forces a label signal in the structure (a removed rule moves its facts off the path), so the edit records are compared with the reference.
+- Multi-choice pairs with a rule edit: train 631 of 7,954 units (7.9%), val 31 of 1,029 (all in c23), test 157 of 1,018 (c18, c28, c31). They need `pri` (section 9.5).
+- Rare edit types (units, all tasks): `exception_remove` train 255, val 22, test 43; `priority_swap` train 327, val 4, test 37.
+- Reviews: round 1 fixed inert stays, a polarity cue, wrong pair feasibility, and easy distractors, and added rule-side edits. Round 2 found a stay marker and a height cue in multi-choice. The audit then found more cues. Round 3 (after the walk): approved with nits, no wrong labels and no hidden shortcut. Its fixes: the path check for edit records, the worst val composition in the audit detail, the claim of the walk, and a unit test for the walk.
 
 ## Step 4: Evaluation Dataset and Frozen Splits
 
@@ -94,6 +112,10 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - Fill in the `null` split sizes, hashes, and n-gram settings in `configs/protocol.yaml` (Step 0).
 - Decide a cap per task for Super-NaturalInstructions: 41 tasks, 142,350 records, and the task sizes are very different (Step 2).
 - The converters default to depth 3 for train and dev. Depth 5 stays for the test split only. The Step 1 smoke test trained on RuleTaker depth 5, but that model is not used again. Birds-Electricity and ParaRules need converters (Step 2).
+- Synthetic data: every val unit has an unseen template group, vocabulary, and composition at the same time, and depths 4–5 occur only in val and test. Keep a separate in-distribution dev set of train-block units (not called "validation"), so that Step 5 can compare seen and unseen accuracy. Report paired accuracy on relevant stays (`meta.edit_relevant`) separately (Step 3).
+- Synthetic binary records have 0.357 Unknown labels in the train block (orig records 0.333). Report the majority-class baseline per block (Step 3).
+- Synthetic edit records in the 7 compositions without a True↔False flip (c00, c01, c02, c04, c06, c08, c09) are 0.53 Unknown in train and 0.56 in val (other compositions about 0.34). The composition shows in the rule types. Report the majority baseline per composition too (Step 3).
+- Report a fact-count baseline: a classifier on the true, false, and missing facts of the queried entity on the query path scores 0.383 (val) and 0.432 (train halves) on balanced orig records (chance 0.333). Random facts with the same label give 0.47, so this signal comes from the logic, but a model can learn it (Step 3).
 
 ## Step 5: Architecture A (Official) and Architecture B: Rule Compiler
 
@@ -108,6 +130,7 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - Do not use lr 1e-4 for Ettin-17M. The dev loss is lowest near epoch 6 and then rises. Include lr values near 3e-5 in the 6-trial search (Step 1).
 - Report the majority-class baseline with every accuracy. In ProofWriter OWA depth 3, "Unknown" is 44.5% of the train records (Step 2).
 - Training uses 32 records per batch in all modes (`FixedBatchSampler`). Equal steps then give equal data (Step 2).
+- Token limits (`configs/step2_data.yaml`): `max_length` 640, `max_instruction_length` 448, `max_state_length` 256. No synthetic record is truncated (Step 3 report: a sample of 2,000 records).
 
 ## Step 6: Architecture C: Counterfactual Learning
 
@@ -126,6 +149,7 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 **Carry-over from earlier steps:**
 - Binary options use one canonical order in all sources (positive label first, then negative, then "Unknown"). Shuffle the option order when you measure order invariance (Step 2).
+- Multi-choice pairs with a rule edit occur only in compositions with `pri`. Validation has only c23 (31 units), so report the validation results for these pairs as one-composition results. Count these pairs per block in the report (Step 3).
 
 ## Step 8: Benchmark All Models
 
@@ -138,8 +162,10 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 **Carry-over from earlier steps:**
 - Limitations: A, B, C, and D share the Ettin initialization, so a contamination affects them equally. DeBERTa-v3-xsmall has different pretraining data (Step 1).
 - DynaBench has only 543 test examples, so its CIs are wide (Step 0).
-- Long inputs: DynaBench has up to 5,486 joint tokens, and the 512 limit truncates 402 of 543 records (the question stays whole). In separate mode, BoardgameQA truncates 10,968 of 37,500 instructions at 256 tokens. Set larger evaluation limits (Ettin supports about 8K tokens). Use the same limits for all models (Step 2).
+- Long inputs: DynaBench has up to 5,486 joint tokens. With the Step 2 limits (`max_length` 640, `max_instruction_length` 448, `max_state_length` 256), joint mode truncates 350 of 543 DynaBench records (rules 314, state 136), and separate mode truncates 397. BoardgameQA: joint mode with options truncates 772 of 37,500 records, and separate mode truncates 1,832 (rules 1,807, state 45). The question stays whole. Set larger evaluation limits (Ettin supports about 8K tokens). Use the same limits for all models (Step 2).
 - Shuffle the option order when you measure order invariance (Step 2).
+- Report each edit type split by the orig label. The mix of edit types depends on the answer: for binary units, `condition_negate` is 0.65 of the units that start at Unknown and 0.25 of those that start at True or False, and `rule_remove` is 0.001 and 0.14. `fact_remove` from Unknown has the flip share 0.29 (a depth-0 Unknown is always a stay) (Step 3).
+- Do not report per-type results of `exception_remove` and `priority_swap` for val (22 and 4 units) (Step 3).
 
 ## Step 9: Optimize for Mobile
 
