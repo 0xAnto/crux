@@ -27,3 +27,25 @@ def test_three_labels_from_the_label_list():
 def test_test_split_is_refused(tmp_path):
     with pytest.raises(ValueError):
         load_split(tmp_path, "test", ["false", "true"])
+
+
+def test_to_records_puts_facts_in_state_and_rules_in_instruction(tmp_path):
+    import json
+
+    from crux.data.ruletaker import to_records
+    from crux.schema import validate
+
+    # The context order is rule1, triple2, triple1 (sentenceScramble gives positions in triples + rules).
+    row = {"id": "T1", "context": "If something is nice then it is kind. Bob is red. Anne is nice.",
+           "meta": {"sentenceScramble": [3, 2, 1]},
+           "questions": [{"id": "T1-1", "text": "Anne is kind.", "label": True,
+                          "meta": {"QDep": 1, "QLen": 2, "strategy": "proof", "Qid": "Q1"}}]}
+    meta = {"id": "T1", "triples": {"triple1": {"text": "Anne is nice."}, "triple2": {"text": "Bob is red."}},
+            "rules": {"rule1": {"text": "If something is nice then it is kind."}}}
+    (tmp_path / "dev.jsonl").write_text(json.dumps(row) + "\n")
+    (tmp_path / "meta-dev.jsonl").write_text(json.dumps(meta) + "\n")
+    (r,) = to_records(tmp_path, "dev", depth=3)
+    assert r["state"] == "Bob is red. Anne is nice."
+    assert r["instruction"] == "If something is nice then it is kind. Question: Anne is kind."
+    assert (r["options"], r["target"], r["meta"]["depth"], r["meta"]["dataset_depth"]) == (["True", "False"], 0, 1, 3)
+    validate(r)
