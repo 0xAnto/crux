@@ -86,17 +86,17 @@ Both samplers are for one process only. They do not split the batches between DD
 
 Show the batches per mode: `python -m crux.data.batching data/processed/ruletaker/depth3/dev.jsonl`.
 
-Truncated records with the limits of `configs/step2_data.yaml` (`max_length` 512, `max_state_length` 256,
-`max_instruction_length` 256, `max_option_length` 32), as state / rules / question lost (lower is better).
+Truncated records with the limits of `configs/step2_data.yaml` (`max_length` 640, `max_state_length` 256,
+`max_instruction_length` 448, `max_option_length` 32), as state / rules / question lost (lower is better).
 No option is truncated. Joint mode without options does not apply to Super-NaturalInstructions (multi_choice).
 
 | Source (records) | joint | joint_options | separate |
 |---|---|---|---|
 | RuleTaker depth 3, train + dev (80,052) | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
 | ProofWriter OWA depth 3, train + dev (79,690) | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| BoardgameQA, 45 files (37,500) | 45 / 2,816 / 0 | 48 / 2,891 / 0 | 45 / 10,968 / 0 |
-| DynaBench (543) | 167 / 358 / 0 | 168 / 359 / 0 | 194 / 386 / 0 |
-| Super-NaturalInstructions (142,350) | n/a | 1,590 / 0 / 0 | 12,533 / 0 / 0 |
+| BoardgameQA, 45 files (37,500) | 0 / 752 / 0 | 0 / 772 / 0 | 45 / 1,807 / 0 |
+| DynaBench (543) | 136 / 314 / 0 | 136 / 314 / 0 | 194 / 301 / 0 |
+| Super-NaturalInstructions (142,350) | n/a | 397 / 0 / 0 | 12,533 / 0 / 0 |
 
 ## Converter contract
 

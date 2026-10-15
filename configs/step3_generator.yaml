@@ -1,0 +1,55 @@
+# Step 3: settings of the synthetic generator (docs/generator_spec.md, sections 8 and 9).
+# Run: python -m crux.gen.generator [--config configs/step3_generator.yaml] [--seed N] [--total N] [--out DIR]
+
+seed: 20261015
+total_records: 100000        # both members of every pair and all paraphrases
+out_dir: data/processed/synthetic/main
+
+# Rejection (section 9.3).
+max_attempts: 200
+max_disagree_share: 0.001    # main() fails if disagree_* exceed this share of all attempts
+# Word caps (section 5.2). The instruction cap is 260 words, so that multi-choice units can have more options. The
+# Step 2 limit max_instruction_length is 448 tokens for this cap. The tokenizer check counts the truncated records.
+caps: {state_words: 120, instruction_words: 260}
+word_margin: 5               # the word budget of the build: estimate <= instruction_words - word_margin
+engine_check: true           # tests set false, so that they do not depend on the engine code
+tokenizer_check: true        # count truncated records in a sample of 2,000 (needs the local tokenizer)
+
+# Plan targets (section 9.2).
+block_shares: {train: 0.8, val: 0.1, test: 0.1}
+multi_choice_share: 0.3
+option_counts: [2, 8]        # uniform
+depth_weights:               # depth of the orig member, 0 to 3 (train) and 0 to 5 (val, test)
+  train: [0.1, 0.3, 0.3, 0.3]
+  val: [1, 1, 1, 1, 1, 1]
+  test: [1, 1, 1, 1, 1, 1]
+flip_share: 0.6              # target: label_flip true in 0.60 of the pairs (the plan probability of a flip)
+# spec: the plan flip probability of a unit is flip_share + flip_gain * (flips missing in its composition so far),
+# clipped to 0..1, so that each composition stays at flip_share (section 9.2).
+flip_gain: 0.05
+# spec: the orig label weight of a binary unit is 1/3 + label_gain * (label deficit of the binary orig records of the
+# composition, in records), at least 0.02, so that the orig labels of each composition stay near 1/3 each (section 9.2).
+# The answer position of a multi-choice unit uses the same rule with 1/n, position_gain, and the position deficit of the
+# records with n options (larger: units with many options are rare). The edit label of a True or False unit uses
+# label_gain and the label deficit of the edit members of the binary flips of the composition.
+label_gain: 0.005
+position_gain: 0.03
+# spec: a stay that changes no derived value (inert) is a fallback for an edit type without other stays, for at most
+# this share of the stays (section 6: 80% of the stays or more are relevant; the audit allows 20% inert stays).
+inert_share: 0.1
+templates_per_unit: [0.6, 0.3, 0.1]
+binary_neg_share: 0.25
+# Options of a multi-choice unit, the upper limit for each depth 0..5 (section 5.2: the word cap). "conj": the options
+# share one chain and differ by own conditions; "single": each option needs its own chain.
+max_options:
+  conj: [8, 8, 7, 6, 5, 5]
+  single: [8, 8, 6, 3, 3, 2]
+# The probability that a new base condition uses a base attribute again (one fact can matter for more than one rule).
+share_base: 0.4
+
+# Theory size (config defaults, not engine rules).
+entities: [1, 4]
+max_conditions: 3
+# spec: section 4.2 limits only the orig depth of train to 3. Here no attribute of a train theory is higher than 3,
+# so the edit members of train also have depth 3 or less ("depths 4 and 5 occur only in validation and test").
+max_height: {train: 3, val: 5, test: 5}
