@@ -43,19 +43,19 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 ## Step 1: Baseline Smoke Test
 
-- [ ] Train Ettin-17M (`jhu-clsp/ettin-encoder-17m`) on RuleTaker with fp16 mixed precision.
-- [ ] Use a head that matches the labels: 2 classes for closed-world data, 3 classes (True/False/Unknown) for open-world data.
-- [ ] Compare the accuracy with the published RuleTaker results. This step only checks the training pipeline. The official A results come from Step 5, on the frozen splits.
-- [ ] Save the checkpoints, the configurations, and the training metrics.
+- [x] Train Ettin-17M (`jhu-clsp/ettin-encoder-17m`) on RuleTaker with fp16 mixed precision.
+- [x] Use a head that matches the labels: 2 classes for closed-world data, 3 classes (True/False/Unknown) for open-world data.
+- [x] Compare the accuracy with the published RuleTaker results. This step only checks the training pipeline. The official A results come from Step 5, on the frozen splits.
+- [x] Save the checkpoints, the configurations, and the training metrics.
 - [x] Check for contamination: search the Ettin pretraining data documentation for RuleTaker and ProofWriter. Record the result.
 
-**Done so far:**
+**Done (2026-10-15):**
 - Contamination check: `docs/contamination.md`. RuleTaker and ProofWriter are not in the Ettin documentation. The Flan data in Ettin can contain the RuleTaker tasks task966 and task967 and 115 of the 119 Super-NaturalInstructions held-out tasks. This is not confirmed.
 - Step 1 trains and evaluates on RuleTaker dev only. It does not read RuleTaker test.
 - Pipeline: `crux/train_step1.py`, `crux/data/ruletaker.py`, `configs/step1_ruletaker.yaml`, `notebooks/step1_smoke.ipynb`. Data: RuleTaker `original/depth-5` (closed world, 2 classes) from the official Ai2 zip. The config pins the SHA-256 of the zip. The loader refuses the test split.
 - The CPU smoke run (5 steps) passes end to end. Its output is deleted. It is not a result.
-- Open: the Colab T4 run. Record the dev accuracy in `docs/step1_report.md`. Reference: 99.2% test accuracy (Clark et al. 2020, RoBERTa-large). The lr 1e-4, batch 32, and 3 epochs are not tested on a GPU.
-- Carry-over to Step 4: the 3-class open-world data comes from the ProofWriter release. It has a different file format, so the loader needs an adaptation.
+- Colab T4 runs (dev accuracy, higher is better): lr 1e-4, 3 epochs: 0.577 (near chance). lr 3e-5, 3 epochs: 0.771. lr 3e-5, 10 epochs: **0.856** (best, 1305 s). Cause: the lr 1e-4 is too high. No bug: the labels are 50/50, the inputs match the raw JSON, and the model overfits 64 examples. Details: `docs/step1_report.md`.
+- Reference: BERT 96.9 and RoBERTa-large 99.2 on depth-5 test (Clark et al. 2020, Table 6). Our number is on dev, and dev also selects the checkpoint, so it is slightly optimistic. The pipeline check passes.
 
 ## Step 2: Unified Decision Schema
 
@@ -85,6 +85,7 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - Run an n-gram overlap check of the frozen test split against the public Ettin `tulu_flan` shards (Step 1, `docs/contamination.md`).
 - Count again the Super-NaturalInstructions tasks with license "Unknown" in the classification subset, and exclude them (Step 0).
 - Fill in the `null` split sizes, hashes, and n-gram settings in `configs/protocol.yaml` (Step 0).
+- The 3-class open-world data comes from the ProofWriter release. It has a different file format, so the loader needs an adaptation (Step 1).
 
 ## Step 5: Architecture A (Official) and Architecture B: Rule Compiler
 
@@ -96,6 +97,7 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 **Carry-over from earlier steps:**
 - Set `budget.training_steps` in `configs/protocol.yaml` before you train A. Use the same value for all configurations (Step 0).
+- Do not use lr 1e-4 for Ettin-17M. The dev loss is lowest near epoch 6 and then rises. Include lr values near 3e-5 in the 6-trial search (Step 1).
 
 ## Step 6: Architecture C: Counterfactual Learning
 
