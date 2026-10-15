@@ -59,10 +59,17 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 ## Step 2: Unified Decision Schema
 
-- [ ] Build a preprocessing pipeline that converts each dataset into `{state, instruction, options, target}` for the binary, multi-choice, and scoring task types.
-- [ ] Keep `state` (facts and evidence) and `instruction` (rules and question) as separate fields. Architecture D encodes and caches these fields independently.
-- [ ] Support a variable number of options per example.
-- [ ] Implement tokenization, dynamic batching, dataset validation, and reusable PyTorch DataLoaders.
+- [x] Build a preprocessing pipeline that converts each dataset into `{state, instruction, options, target}` for the binary, multi-choice, and scoring task types.
+- [x] Keep `state` (facts and evidence) and `instruction` (rules and question) as separate fields. Architecture D encodes and caches these fields independently.
+- [x] Support a variable number of options per example.
+- [x] Implement tokenization, dynamic batching, dataset validation, and reusable PyTorch DataLoaders.
+
+**Done (2026-10-15):**
+- Schema `{id, source, task_type, state, instruction, options, target, meta}` in `crux/schema.py`. Binary tasks use the candidate form. One label order in all sources: positive, negative, "Unknown". Details: `docs/schema.md`.
+- `crux/data/batching.py`: joint mode (A/B/C) and separate mode (D). Truncation cuts the rules and keeps the "Question: ..." tail. Training uses `FixedBatchSampler` (32 records per batch), so equal steps give equal data in all modes. Evaluation uses `TokenBudgetSampler`. Both samplers are for one process only.
+- Converters (records): RuleTaker depth 3: train 70,108, dev 9,944. ProofWriter OWA depth 3: train 69,388, dev 10,302. Evaluation only: BoardgameQA 37,500 (15 subsets), DynaBench 543, Super-NaturalInstructions 142,350 (41 tasks). Test splits of RuleTaker and ProofWriter are not opened.
+- A critical review found 9 defects (label order, question loss in truncation, budget, depth-5 use, and others). All are fixed. 51 tests pass.
+- Colab notebook: `notebooks/step2_data.ipynb`.
 
 ## Step 3: Counterfactual Dataset Generator
 
@@ -85,7 +92,8 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - Run an n-gram overlap check of the frozen test split against the public Ettin `tulu_flan` shards (Step 1, `docs/contamination.md`).
 - Count again the Super-NaturalInstructions tasks with license "Unknown" in the classification subset, and exclude them (Step 0).
 - Fill in the `null` split sizes, hashes, and n-gram settings in `configs/protocol.yaml` (Step 0).
-- The 3-class open-world data comes from the ProofWriter release. It has a different file format, so the loader needs an adaptation (Step 1).
+- Decide a cap per task for Super-NaturalInstructions: 41 tasks, 142,350 records, and the task sizes are very different (Step 2).
+- The converters default to depth 3 for train and dev. Depth 5 stays for the test split only. The Step 1 smoke test trained on RuleTaker depth 5, but that model is not used again. Birds-Electricity and ParaRules need converters (Step 2).
 
 ## Step 5: Architecture A (Official) and Architecture B: Rule Compiler
 
@@ -98,6 +106,8 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 **Carry-over from earlier steps:**
 - Set `budget.training_steps` in `configs/protocol.yaml` before you train A. Use the same value for all configurations (Step 0).
 - Do not use lr 1e-4 for Ettin-17M. The dev loss is lowest near epoch 6 and then rises. Include lr values near 3e-5 in the 6-trial search (Step 1).
+- Report the majority-class baseline with every accuracy. In ProofWriter OWA depth 3, "Unknown" is 44.5% of the train records (Step 2).
+- Training uses 32 records per batch in all modes (`FixedBatchSampler`). Equal steps then give equal data (Step 2).
 
 ## Step 6: Architecture C: Counterfactual Learning
 
@@ -114,6 +124,9 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Ablation **C+equivariant**: candidate scoring only.
 - [ ] Evaluate unseen-rule generalization, option-order invariance, memory consumption, and inference latency (with and without a cache hit).
 
+**Carry-over from earlier steps:**
+- Binary options use one canonical order in all sources (positive label first, then negative, then "Unknown"). Shuffle the option order when you measure order invariance (Step 2).
+
 ## Step 8: Benchmark All Models
 
 - [ ] Evaluate A, A-param, A+CF, B, B+CF, C, D, the two ablations of D, and the external baselines on the frozen test split. Evaluate also on RuleTaker, ProofWriter, BoardgameQA, DynaBench, and the Super-NaturalInstructions held-out classification tasks (only the benchmarks that pass the Step 0 license check).
@@ -125,6 +138,8 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 **Carry-over from earlier steps:**
 - Limitations: A, B, C, and D share the Ettin initialization, so a contamination affects them equally. DeBERTa-v3-xsmall has different pretraining data (Step 1).
 - DynaBench has only 543 test examples, so its CIs are wide (Step 0).
+- Long inputs: DynaBench has up to 5,486 joint tokens, and the 512 limit truncates 402 of 543 records (the question stays whole). In separate mode, BoardgameQA truncates 10,968 of 37,500 instructions at 256 tokens. Set larger evaluation limits (Ettin supports about 8K tokens). Use the same limits for all models (Step 2).
+- Shuffle the option order when you measure order invariance (Step 2).
 
 ## Step 9: Optimize for Mobile
 
