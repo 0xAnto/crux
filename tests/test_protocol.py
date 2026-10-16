@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 
 import yaml
 
-P = yaml.safe_load((Path(__file__).parents[1] / "configs" / "protocol.yaml").read_text())
+ROOT = Path(__file__).parents[1]
+P = yaml.safe_load((ROOT / "configs" / "protocol.yaml").read_text())
 
 CONFIGS = {"A", "B", "C", "D", "A-param", "A+CF", "B+CF", "C+cache", "C+equivariant",
            "Ettin-32M", "DeBERTa-v3-xsmall"}
@@ -36,3 +38,13 @@ def test_mobile_metrics_present():
 
 def test_amendments_start_empty():
     assert P["amendments"] == []
+
+
+def test_step4_fields_are_filled_and_match_the_manifest():
+    manifest = json.loads((ROOT / "configs" / "splits_manifest.json").read_text())
+    settings = yaml.safe_load((ROOT / "configs" / "step4_splits.yaml").read_text())
+    assert P["splits"]["leakage"]["ngram_n"] == settings["ngram_n"] == manifest["settings"]["ngram_n"]
+    assert P["splits"]["leakage"]["max_overlap"] == settings["max_overlap"]
+    for name, key in (("train", "train"), ("validation", "validation"), ("test", "test")):
+        assert P["splits"][name]["size"] == manifest["splits"][name]["n"] > 0
+        assert P["splits"]["split_hash"][key] == manifest["splits"][name]["sha256"]

@@ -45,3 +45,43 @@ Notes:
 - Step 8: all of A, B, C, and D start from the same Ettin weights. A possible contamination affects them in the same way. Paired differences between them are less at risk. Absolute accuracy, and the comparison with DeBERTa-v3-xsmall, are at risk. State this in the limitations.
 - SNI held-out tasks (evaluation only): the Flan catalog lists most of them. Check the overlap before you use them. Report them as "possibly seen in pretraining" if the check is not done.
 - BoardgameQA and DynaBench: no action is needed from this check. Keep the web-crawl caveat in the limitations.
+
+## Step 4 measured overlap
+
+Date of scan: 2026-10-16. Code: `crux/contamination.py`. Command:
+`python -m crux.contamination scan --name step4_test --test data/splits/test.jsonl --sni task966 task967 --source dolma`.
+
+- Corpus: Dolma v1.7 `tulu_flan`, the 66 files `tulu_flan-0000.json.gz` to `tulu_flan-0065.json.gz` of the URL list
+  `https://huggingface.co/datasets/allenai/dolma/resolve/main/urls/v1_7.txt` (29,144,203,991 bytes, 11,018,642,377 word tokens).
+  All 66 files are scanned. The scan streams the files and does not keep them.
+- Settings: word 8-grams of lowercase `[a-z0-9]+` tokens of `state + " " + instruction`. A record is flagged if more than 0.10 of its distinct
+  8-grams occur in the corpus. These are `leakage.ngram_n` and `leakage.max_overlap` of `configs/protocol.yaml`.
+- Scanned test split: the first freeze, 43,394 records, SHA-256 `baa1699b1e41ecfef6b71a167c5e6267f187961fdf3ab80461b736cf79a0ac93`.
+
+Overlap with `tulu_flan` per subset (share of the 8-grams of a record found in the corpus; lower is better).
+
+| Subset | Records | Records with a shared 8-gram | Flagged (> 0.10) | Max share | p99 share |
+|---|---|---|---|---|---|
+| synthetic test block | 10,086 | 0 | 0 | 0.0000 | 0.0000 |
+| ProofWriter depth 5 | 20,030 | 17,290 | 1,173 | 0.2013 | 0.1497 |
+| Birds-Electricity | 5,270 | 0 | 0 | 0.0000 | 0.0000 |
+| ParaRules | 8,008 | 332 | 0 | 0.0106 | 0.0085 |
+| SNI task966 (RuleTaker, not in the test split) | 300 | 300 | 300 | 1.0000 | 1.0000 |
+| SNI task967 (RuleTaker, not in the test split) | 296 | 295 | 291 | 1.0000 | 1.0000 |
+
+Findings:
+
+- Row 5 of the findings table is now resolved: the RuleTaker examples of the SNI tasks 966 and 967 occur verbatim in `tulu_flan`. Thus Ettin saw RuleTaker text in pretraining.
+- The flagged depth-5 records are not copies (the maximum share is 0.20). The shared 8-grams are RuleTaker sentence frames with the RuleTaker names,
+  for example "the bald eagle then the bald eagle is". ProofWriter uses the same generator and the same names as RuleTaker.
+  The 1,173 flagged records come from 67 theories.
+- The synthetic test block and Birds-Electricity share no 8-gram with the corpus. ParaRules shares a few (max share 0.0106).
+
+Action (the rule of the section above): the split build removes the 1,173 flagged records from the test split before the freeze. The ids are in
+`configs/step4_contamination_removed.txt`. The frozen test split has 42,221 records (`depth5`: 18,857), SHA-256
+`fbe0cfcae2b99f98e7a7478e0e3945a29e72ac250feceef7b8ab452b7b4aff58`. The removed records are a subset of the scanned records, so the scan is
+valid for the rest: 16,117 of the 18,857 remaining `depth5` records share at least one 8-gram, with a maximum share of 0.10.
+Step 8 reports `depth5` with this caveat: the frames and names of its text occur in the pretraining data of all Ettin-based models.
+
+Not scanned: the Super-NaturalInstructions held-out benchmark (`data/splits/benchmarks/supernat.jsonl`). The Flan catalog lists 115 of its 119 tasks.
+Step 8 reports it as "possibly seen in pretraining", or a later scan with the same command (`--test data/splits/benchmarks/supernat.jsonl`) measures it.

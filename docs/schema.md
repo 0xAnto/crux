@@ -124,7 +124,8 @@ write_jsonl(records, PROCESSED_DIR / "<source>" / "<setting>" / f"{split}.jsonl"
   `python -m crux.schema data/processed/<source>/<setting>/<split>.jsonl`.
 - Add one test with an inline raw sample (no network): check the `state`/`instruction` split, the options,
   the target, and call `validate`.
-- Do not open a test split before the protocol permits it. The RuleTaker and ProofWriter converters refuse `test`.
+- Do not open a test split before the protocol permits it. `ruletaker.to_records` and `proofwriter.to_records` refuse `test`.
+  Only the Step 4 split freezer calls `proofwriter.to_test_records`. Step 8 reads the frozen file (`docs/splits.md`).
 - Reference converter: `to_records(data_dir, split, depth=3)` in `crux/data/ruletaker.py`.
   Run it with `python -m crux.data.ruletaker`.
 

@@ -1,0 +1,16 @@
+# Step 4: settings of the split freezer (docs/splits.md). Run: python -m crux.splits build
+# The values are choices of the author. protocol.yaml holds a copy of ngram_n and max_overlap (a test compares them).
+
+seed: 20261016          # seed of the hash that picks the dev_id units
+dev_share: 0.05         # share of the train-block units in dev_id (in-distribution dev set, not for model selection)
+ngram_n: 8              # word n-gram length of the near-duplicate check
+max_overlap: 0.10       # a record is a near-duplicate if more than this share of its n-grams occur in the reference split
+supernat_cap: 100       # instances per held-out task: the first 100 in file order (the official evaluation uses 100)
+boardgameqa_splits: [test]   # the official test file of each of the 15 subsets
+
+synthetic_dir: data/processed/synthetic/main
+proofwriter_cache: data/proofwriter
+supernat_repo: data/raw/supernat/.repo
+# test records that the Ettin tulu_flan scan flags (docs/contamination.md). The build removes them from test.
+contamination_removed: configs/step4_contamination_removed.txt
+out_dir: data/splits

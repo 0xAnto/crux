@@ -47,12 +47,12 @@ splits:
   # or an instruction paraphrase only if the train split does not contain it.
   train:
     sources: [synthetic counterfactual generator (Step 3)]
-    size: null               # filled by Step 4
+    size: 75646            # Step 4 (2026-10-16): synthetic train block minus the dev_id units (dev_id: 4162, in the manifest only)
   validation:
     use: "all model selection and all hyperparameter search"
     # Choice: validation also holds out template IDs, so selection sees unseen rules.
     unseen_rules: true
-    size: null               # filled by Step 4
+    size: 10106            # Step 4 (2026-10-16): synthetic val block
   test:
     unseen_rules: true       # unseen templates, compositions, vocabulary, and paraphrases
     unseen_instructions: true
@@ -60,15 +60,15 @@ splits:
       - ProofWriter depth 5
       - Birds-Electricity
       - ParaRules
-    size: null               # filled by Step 4
+    size: 42221            # Step 4 (2026-10-16): synthetic test block 10086, ProofWriter depth 5 18857, Birds-Electricity 5270, ParaRules 8008 (1173 depth-5 records removed: docs/contamination.md)
     frozen_in_step: 4
     evaluate_once: true      # one evaluation, in Step 8 only
     evaluated_in_step: 8
   split_hash:
     algorithm: sha256        # choice: common hash; Step 4 records one hash per split file
-    train: null
-    validation: null
-    test: null
+    train: bd8cc1141ba3054c94c6e2554f0a927ecc62ea2a4bef716f4fb9adabc06747fa   # Step 4 (2026-10-16): the file hashes. The manifest holds the other files too.
+    validation: d414891bf974805a4b98d51921435491fad6706a20d9fae06c9d4fd4a9839831
+    test: fbe0cfcae2b99f98e7a7478e0e3945a29e72ac250feceef7b8ab452b7b4aff58
   evaluation_only_benchmarks:
     # Do not train on these. Exception: a separate fine-tune experiment with its own label.
     # Use a benchmark only if it passes the license check in DATA_LICENSES.md.
@@ -80,8 +80,8 @@ splits:
   leakage:
     shared_template_ids: forbidden      # train vs validation vs test
     near_duplicate_check: ngram_overlap # train vs validation vs test, and train vs benchmarks
-    ngram_n: null            # filled by Step 4
-    max_overlap: null        # filled by Step 4
+    ngram_n: 8               # Step 4: word n-grams of state + instruction (docs/splits.md)
+    max_overlap: 0.10        # Step 4: a record is a near-duplicate if more than 10% of its n-grams occur in the reference split
     on_violation: "remove the example from the evaluation split, then re-check"
     # Step 4 checks the split automatically before it records the hashes.
 
