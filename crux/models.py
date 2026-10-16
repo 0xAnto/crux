@@ -9,6 +9,7 @@ The softmax over the real options of a record gives the probabilities. Padded op
   generates rank-r factors (A, B) for the head dense layer: W x + (x A) B. With hyper_layers K > 0 it also
   generates rank-r adapters for Wqkv and Wo of the top K encoder layers. z then comes from the hidden states
   after layer L-K-1, so one encoder pass is enough. The B factors start at zero, so B starts equal to A.
+  The encoder factors are bounded (see `bound`): no norm follows the delta, and unbounded factors overflow fp16.
 - A-param: A + a static LoRA with the same number of trainable parameters as the hypernetwork of B.
 """
 import torch
@@ -74,6 +75,11 @@ class Hypernet(nn.Module):
             pairs.append((a, b))
             pos += r * (i + o)
         return pairs
+
+
+def bound(v, limit):
+    """Soft bound of the generated factors of the encoder adapters: limit * tanh(v / limit), zero stays zero."""
+    return limit * torch.tanh(v / limit)
 
 
 def static_ranks(costs, budget):
@@ -171,7 +177,7 @@ class Scorer(nn.Module):
         if self.arch == "B" and self.K:
             pairs = self.hyper(instruction_embedding(h))
             for m, (a, b) in zip(self.adapted, pairs[1:]):
-                m.delta = (a[ex], b[ex])
+                m.delta = (bound(a, m.in_features ** -0.5)[ex], bound(b, m.out_features ** -0.5)[ex])
         h = enc.final_norm(run(enc.layers[low:], h))
         for m in getattr(self, "adapted", []):
             m.delta = None

@@ -272,3 +272,44 @@ def test_the_final_model_is_the_best_checkpoint_on_validation(tmp_path, monkeypa
     best = torch.load(tmp_path / "best.pt")
     assert out["best_step"] == best["step"] == 2
     assert all(torch.equal(v, model.state_dict()[k]) for k, v in best["model"].items())
+
+
+def reference_models():
+    """crux/models.py of commit b7220bf (before the bound on the encoder adapters), loaded as a module."""
+    import subprocess
+    import types
+    src = subprocess.run(["git", "show", "b7220bf:crux/models.py"], capture_output=True, text=True, check=True).stdout
+    mod = types.ModuleType("models_b7220bf")
+    exec(compile(src, "models_b7220bf", "exec"), mod.__dict__)
+    return mod
+
+
+@pytest.mark.parametrize("arch,K", [("A", 0), ("B", 0), ("A-param", 0), ("A-param", 2)])
+def test_outputs_and_gradients_without_encoder_adapters_equal_commit_b7220bf(arch, K):
+    ref_cls = reference_models().Scorer
+    ref = ref_cls(tiny_encoder(), arch, hyper_layers=K)
+    new = Scorer(tiny_encoder(), arch, hyper_layers=K)
+    if arch == "B":
+        randomize_hyper(ref)
+    new.load_state_dict(ref.state_dict())
+    x, grads = batch(), []
+    for m in (ref, new):
+        m.train(), m.zero_grad()
+        m(**x)[x["option_mask"]].square().sum().backward()
+        grads.append({k: p.grad.clone() for k, p in m.named_parameters() if p.grad is not None})
+    assert torch.equal(ref(**x), new(**x))
+    assert grads[0].keys() == grads[1].keys() and all(torch.equal(grads[0][k], grads[1][k]) for k in grads[0])
+
+
+def test_encoder_adapter_factors_are_bounded():
+    m = Scorer(tiny_encoder(), "B", hyper_layers=2).eval()
+    with torch.no_grad():
+        m.hyper.fc2.bias.add_(100.0)  # huge generated factors
+        m.hyper.fc2.weight.normal_(std=10.0)
+    seen = []
+    for lora in m.adapted:
+        lora.register_forward_hook(lambda mod, inp, out: seen.append(mod.delta))
+    m(**batch())
+    assert len(seen) == len(m.adapted) == 4
+    for lora, (a, b) in zip(m.adapted, seen):
+        assert a.abs().max() <= lora.in_features ** -0.5 + 1e-6 and b.abs().max() <= lora.out_features ** -0.5 + 1e-6
