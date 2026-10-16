@@ -144,6 +144,8 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 **In progress (2026-10-16, no results yet):**
 - Files: `crux/models.py` (A, B, B-ablation `hyper_layers: K`, A-param), `crux/train.py` (train, resume, evaluate, latency), `crux/aggregate.py` (selection, mean ± std, paired bootstrap CI), `configs/step5.yaml` (4 architectures, 6 trials), `tests/test_models.py`, `notebooks/step5_train.ipynb`.
 - Budget: `budget.training_steps` is 6000 (2.5 epochs), frozen on 2026-10-16. The Step 1 curve (dev 0.66 at step 3000, best 0.856 near step 21,800) shows that 3000 steps probably under-trains A. T4 timing run (200 steps, seconds per step, lower is better): A 0.320, B 0.334, B-abl 0.340, A-param 0.413. No error, no OOM (peak 11.7 GiB), no non-finite loss. Estimate for 72 runs with evaluation: about 50 T4 GPU-hours.
+- B-abl fix (commit `293b426`): on the T4, all 3 seeds of B-abl trial 0 stopped with a non-finite fp16 loss (steps 507 to 1025). The generated encoder factors grew to 25 times their init scale, and the Wo delta drove the residual stream to the fp16 limit. The encoder factors are now soft-bounded (`limit * tanh(v / limit)`). A, B, and A-param stay bit-identical to `b7220bf` (test), so their runs stay valid. The 3 failed B-abl runs start again from step 0.
+- Sweep: `crux/colab_sweep.py` runs the 72 runs on Colab T4 VMs without supervision (2 VMs: Colab refuses a third T4). Status: `runs/step5/sweep_status.json`. Restart after a reboot: `nohup caffeinate -i .venv/bin/python -m crux.colab_sweep >> runs/step5/driver.out 2>&1 &`.
 - `num_workers` is 0: the dataset holds a lambda, so a worker process fails with spawn (macOS) and forkserver (Python 3.14 on Linux).
 
 **Carry-over from earlier steps:**
