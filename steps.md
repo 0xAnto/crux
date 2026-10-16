@@ -100,11 +100,27 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 ## Step 4: Evaluation Dataset and Frozen Splits
 
-- [ ] Make train, validation, and test splits. The test split contains rule templates, compositions, vocabulary, and paraphrases that do not occur in the train split.
-- [ ] Hold out by reasoning depth and by domain: use ProofWriter depth 5, Birds-Electricity, and ParaRules only for tests.
-- [ ] Check for leakage automatically: no shared template IDs, no near-duplicate texts (n-gram overlap) between train and test.
-- [ ] Record a hash for each split file, then freeze the splits.
-- [ ] Implement these metrics: accuracy, counterfactual paired accuracy, paraphrase consistency, calibration (ECE), option-order invariance, and unseen-rule accuracy.
+- [x] Make train, validation, and test splits. The test split contains rule templates, compositions, vocabulary, and paraphrases that do not occur in the train split.
+- [x] Hold out by reasoning depth and by domain: use ProofWriter depth 5, Birds-Electricity, and ParaRules only for tests.
+- [x] Check for leakage automatically: no shared template IDs, no near-duplicate texts (n-gram overlap) between train and test.
+- [x] Record a hash for each split file, then freeze the splits.
+- [x] Implement these metrics: accuracy, counterfactual paired accuracy, paraphrase consistency, calibration (ECE), option-order invariance, and unseen-rule accuracy.
+
+**Done (2026-10-16):**
+- Splits (`crux/splits.py`, `configs/step4_splits.yaml`, `docs/splits.md`). Frozen in `configs/splits_manifest.json` and `configs/protocol.yaml`. Records: train 75,646, dev_id 4,162, validation 10,106, test 42,221 (synthetic test block 10,086, ProofWriter OWA depth 5 18,857, Birds-Electricity 5,270, ParaRules 8,008). Evaluation-only benchmarks: BoardgameQA 15,000 (the official test file of each of the 15 subsets), DynaBench 543, Super-NaturalInstructions 4,100.
+- SHA-256: train `bd8cc114…`, validation `d414891b…`, test `fbe0cfca…`. Two builds give the same hashes. `build` writes to `data/splits.new/` and replaces the frozen files only with `--refreeze`. `load_split` checks the hash against the manifest and `protocol.yaml`, and refuses `test` without `allow_test=True` (Step 8 only).
+- dev_id: 5% of the train-block units (seeded hash of `unit_id`). It is an in-distribution dev set with the train templates, compositions, and vocabulary. It is not for model selection.
+- Test-only converters: `to_test_records` in `crux/data/proofwriter.py` reads the OWA `meta-test.jsonl` of depth 5, Birds-Electricity, and NatLang (= ParaRules), with 3 classes as the synthetic data. The ParaRules `theory` is a paraphrase, so the facts and the rules come from `sentences` and `mappings`. All 33,308 records agree with the raw labels (review check).
+- Leakage: no shared id (template, template group, composition, vocabulary, paraphrase group, unit, theory hash) between train, validation, and test, and dev_id against validation and test. No exact duplicate. Word 8-gram overlap (limit 0.10) is 0.0000 (max) in all six pairs (validation, test, and the 3 benchmarks against train; test against validation). No record is removed. The check is not vacuous: dev_id against train gives a mean of 0.596.
+- Super-NaturalInstructions: 47 of the 119 held-out tasks are classification tasks with a fixed label set. 6 of them have the license "Unknown" and are excluded, so 41 remain. Cap: the first 100 instances of each task in file order, as in the official Tk-Instruct loader.
+- Metrics (`crux/metrics.py`, `docs/metrics.md`): accuracy, macro F1, ECE (15 bins), counterfactual paired accuracy (by flip, stay, relevant stay, `unit_depth`, and edit type by orig label), paraphrase consistency, option-order invariance (`permute_options`), unseen-rule accuracy (by feature count and depth), and the majority baseline (train labels only). `evaluate` reports each source and `meta.subset` separately when a file mixes them.
+- Baselines (accuracy, higher is better; validation): majority binary 0.348, multi-choice 0.298; fact-count probe 0.389 (dev_id 0.454). Per-composition majority values are in `docs/splits.md`.
+- Protocol decision: Step 4 reads the test split only to build, hash, and check it. The manifest and the docs hold no label count and no model statistic of test. Step 8 computes the test baselines with the same code. An earlier build of this step scored the fact-count probe and the majority on test. These values are deleted, and nothing used them.
+- Correction of Step 3: only 8.5% of the binary stays and 20.4% of the multi-choice stays have `meta.edit_relevant`. `docs/generator_spec.md` section 6 said "80% or more". The generator selects stays by a looser test (any derived value of the queried entity changes). The spec is corrected. The data and the labels do not change. Relevant-stay pairs in validation: 116 binary, 111 multi-choice.
+- Contamination (`crux/contamination.py`, `docs/contamination.md`): the test split is scanned against all 66 files of Dolma v1.7 `tulu_flan` (29.1 GB, 11.0B words). The RuleTaker examples of the SNI tasks 966 and 967 occur verbatim (591 of 596 flagged), so Ettin saw RuleTaker text. 1,173 ProofWriter depth-5 records (67 theories) share more than 0.10 of their 8-grams (max 0.20). They share the RuleTaker sentence frames and names, not whole theories. Following the pre-registered rule, the build removes them (`configs/step4_contamination_removed.txt`), and the test split is frozen again: 42,221 records, depth 5 18,857. The synthetic test block and Birds-Electricity share no 8-gram. ParaRules has a max share of 0.011.
+- A critical review found a build that overwrote the frozen files before the hash check, a silent loss of unseen-rule accuracy on mixed files, a crash on dev_id, paired slices by `depth`, and tests that did not fail on broken logic. All are fixed. 344 tests pass.
+- `pytest.ini` sets `pythonpath = .`, so the plain `pytest` command imports `crux` again.
+- Colab notebook: `notebooks/step4_splits.ipynb`.
 
 **Carry-over from earlier steps:**
 - Run an n-gram overlap check of the frozen test split against the public Ettin `tulu_flan` shards (Step 1, `docs/contamination.md`).
@@ -131,6 +147,8 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - Report the majority-class baseline with every accuracy. In ProofWriter OWA depth 3, "Unknown" is 44.5% of the train records (Step 2).
 - Training uses 32 records per batch in all modes (`FixedBatchSampler`). Equal steps then give equal data (Step 2).
 - Token limits (`configs/step2_data.yaml`): `max_length` 640, `max_instruction_length` 448, `max_state_length` 256. No synthetic record is truncated (Step 3 report: a sample of 2,000 records).
+- Load the data only with `crux.splits.load_split` (train, dev_id, validation). Select on validation only. Report dev_id (seen rules) next to validation (unseen rules) (Step 4).
+- `crux.metrics.evaluate(records, probs, train=train)` gives all metrics. Slice paired metrics by `unit_depth`, not `depth` (orig and edit differ in depth in 165 of 5,053 validation pairs) (Step 4).
 
 ## Step 6: Architecture C: Counterfactual Learning
 
@@ -166,6 +184,10 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - Shuffle the option order when you measure order invariance (Step 2).
 - Report each edit type split by the orig label. The mix of edit types depends on the answer: for binary units, `condition_negate` is 0.65 of the units that start at Unknown and 0.25 of those that start at True or False, and `rule_remove` is 0.001 and 0.14. `fact_remove` from Unknown has the flip share 0.29 (a depth-0 Unknown is always a stay) (Step 3).
 - Do not report per-type results of `exception_remove` and `priority_swap` for val (22 and 4 units) (Step 3).
+- Read the test split with `load_split("test", allow_test=True)`, one time. Compute the test baselines (majority with `ref=train`, fact-count probe) at the same time. Report each test subset separately: synthetic, `depth5`, `birds_electricity`, `pararules`, each with its majority baseline (Step 4).
+- `depth5` holds 10 questions of depth 6 or 7. `meta.depth` records them (Step 4).
+- The sentence frames and names of `depth5` occur in the Ettin pretraining data (the max 8-gram share of a kept record is 0.10). State this for `depth5` and for all Ettin-based models. The Super-NaturalInstructions benchmark is not scanned: report it as "possibly seen in pretraining", or scan it first with `crux.contamination` (Step 4).
+- The held-out sets are the open-world versions (True / False / Unknown) from the ProofWriter release, because the synthetic training data has 3 classes. Compare them only with published open-world results (ProofWriter, Tafjord et al. 2021). Do not compare them with the closed-world RuleTaker results (Clark et al. 2020). The test split has no closed-world RuleTaker set (Step 4).
 
 ## Step 9: Optimize for Mobile
 

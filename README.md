@@ -25,7 +25,7 @@ The project makes no claim about B, C, or D.
 | 1 | Baseline smoke test | Complete |
 | 2 | Unified decision schema, data loaders, converters | Complete |
 | 3 | Counterfactual dataset generator | Complete |
-| 4 | Evaluation dataset and frozen splits | Not started |
+| 4 | Evaluation dataset and frozen splits | Complete |
 | 5 | Architecture A (official) and B | Not started |
 | 6 | Architecture C | Not started |
 | 7 | Architecture D | Not started |
@@ -37,12 +37,15 @@ The project makes no claim about B, C, or D.
 
 - `goal.md`: project goal, hypothesis, and success criterion.
 - `steps.md`: Steps 0 to 10, with the status of each step.
-- `configs/`: `protocol.yaml` (pre-registered protocol) and the settings of Steps 1 to 3.
+- `configs/`: `protocol.yaml` (pre-registered protocol), the settings of Steps 1 to 4, and `splits_manifest.json` (the SHA-256 and counts of the frozen splits).
 - `crux/schema.py`: the decision record schema and its validator.
 - `crux/data/`: loaders and converters (RuleTaker, ProofWriter, BoardgameQA, DynaBench, Super-NaturalInstructions) and the batching code.
 - `crux/train_step1.py`: the Step 1 training script.
 - `crux/gen/`: the Step 3 generator, the independent rule engine, and the shortcut audit.
-- `docs/`: `schema.md`, `generator_spec.md`, `step1_report.md`, `contamination.md`, `literature_review.md`.
+- `crux/splits.py`: the Step 4 split freezer, the leakage check, and `load_split`.
+- `crux/metrics.py`: the evaluation metrics (`docs/metrics.md`).
+- `crux/contamination.py`: the n-gram overlap scan of the test split against the Ettin `tulu_flan` data.
+- `docs/`: `schema.md`, `generator_spec.md`, `splits.md`, `metrics.md`, `step1_report.md`, `contamination.md`, `literature_review.md`.
 - `notebooks/`: one Colab notebook per step.
 - `tests/`: unit tests.
 - `DATA_LICENSES.md`: licenses of all datasets and model weights.
@@ -92,6 +95,14 @@ The generator writes `all.jsonl`, `theories.jsonl`, and `report.json` to `data/p
 python -m crux.gen.generator [--config configs/step3_generator.yaml] [--seed N] [--total N] [--out DIR]
 python -m crux.gen.engine check data/processed/synthetic/main/all.jsonl
 python -m crux.gen.audit data/processed/synthetic/main/
+```
+
+Step 4: build and freeze the splits, then check the files against the manifest.
+The build reads the Step 2 and Step 3 outputs and writes `data/splits/`. It stops if a hash differs from the frozen manifest.
+
+```
+python -m crux.splits build
+python -m crux.splits verify
 ```
 
 Run the tests.
