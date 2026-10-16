@@ -143,8 +143,8 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 **In progress (2026-10-16, no results yet):**
 - Files: `crux/models.py` (A, B, B-ablation `hyper_layers: K`, A-param), `crux/train.py` (train, resume, evaluate, latency), `crux/aggregate.py` (selection, mean ± std, paired bootstrap CI), `configs/step5.yaml` (4 architectures, 6 trials), `tests/test_models.py`, `notebooks/step5_train.ipynb`.
-- Budget: `budget.training_steps` stays `null` until a T4 timing run. Estimates without a T4 run: 0.2 to 0.4 s per step. The Step 1 curve (dev 0.66 at step 3000, best 0.856 near step 21,800) shows that 3000 steps (1.27 epochs) probably under-trains A. Choose the highest value that the T4 hours allow (6000 steps if a step takes about 0.2 s).
-- Order: (1) push the code, (2) run 50 steps on the T4 (`--set train.steps=50 data.max_train=2000 data.max_eval=500`) to time it and to check the fp16 path, (3) set `budget.training_steps`, (4) run the sweep.
+- Budget: `budget.training_steps` is 6000 (2.5 epochs), frozen on 2026-10-16. The Step 1 curve (dev 0.66 at step 3000, best 0.856 near step 21,800) shows that 3000 steps probably under-trains A. T4 timing run (200 steps, seconds per step, lower is better): A 0.320, B 0.334, B-abl 0.340, A-param 0.413. No error, no OOM (peak 11.7 GiB), no non-finite loss. Estimate for 72 runs with evaluation: about 50 T4 GPU-hours.
+- `num_workers` is 0: the dataset holds a lambda, so a worker process fails with spawn (macOS) and forkserver (Python 3.14 on Linux).
 
 **Carry-over from earlier steps:**
 - Set `budget.training_steps` in `configs/protocol.yaml` before you train A. Use the same value for all configurations (Step 0).

@@ -183,7 +183,7 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
     np.savez_compressed(out / "val_probs.npz", ids=np.array([r["id"] for r in data["validation"]]), hits=hits,
                         probs=np.concatenate(probs).astype(np.float32), lens=np.array([len(p) for p in probs]))
     metrics = {"arch": cfg["model"]["arch"], "hyper_layers": cfg["model"].get("hyper_layers", 0), "seed": seed,
-               "steps": steps, "best_step": best["step"], "train_seconds": time.time() - t0,
+               "steps": steps, "fp16": fp16, "best_step": best["step"], "train_seconds": time.time() - t0,
                "n_train": len(data["train"]), "validation": val, "dev_id": dev, **count_params(model),
                "static_target": getattr(model, "static_target", None),
                "latency": latency(model, tokenizer, data["validation"], dcfg, cfg["latency"], device, fp16)}

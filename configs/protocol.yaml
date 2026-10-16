@@ -35,7 +35,9 @@ configurations:
 budget:
   # Equal for all configurations, controls, and baselines.
   # Step 5 fixes this value before any training of A. Use the same value for all.
-  training_steps: null   # Step 5 (2026-10-16): set after the 50-step T4 timing run (steps.md, Step 5). crux.train refuses a full run while it is null.
+  training_steps: 6000   # Step 5 (2026-10-16): 6000 steps x 32 records = 192,000 records (2.5 epochs of the 75,646 train records).
+                         # Reason: Step 1 still improved after 3000 steps. T4 timing run (200 steps): A 0.320, B 0.334, B-abl 0.340, A-param 0.413 s per step.
+                         # Estimate for 72 runs with evaluation: about 50 T4 GPU-hours.
   data: "same frozen train split for all"
   hyperparameter_search:
     trials: 6
