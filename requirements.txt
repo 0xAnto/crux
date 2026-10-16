@@ -1,7 +1,8 @@
 # Minimum dependencies for Step 1.
 # ModernBERT (the Ettin architecture) needs transformers 4.48 or later.
+# crux/models.py needs 5.1 or later: it uses masking_utils.create_bidirectional_sliding_window_mask.
 torch
-transformers>=4.48
+transformers>=5.1
 accelerate>=1.1
 pyyaml
 pytest

@@ -141,6 +141,11 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 - [ ] Control **A-param**: give A an unconditioned LoRA with the same number of trainable parameters as B. This control shows if the conditioning helps, or only the extra parameters help.
 - [ ] Train with the same data and compute budget as A. Compare the accuracy, the generalization, the latency, and the parameter count on the validation split.
 
+**In progress (2026-10-16, no results yet):**
+- Files: `crux/models.py` (A, B, B-ablation `hyper_layers: K`, A-param), `crux/train.py` (train, resume, evaluate, latency), `crux/aggregate.py` (selection, mean ± std, paired bootstrap CI), `configs/step5.yaml` (4 architectures, 6 trials), `tests/test_models.py`, `notebooks/step5_train.ipynb`.
+- Budget: `budget.training_steps` stays `null` until a T4 timing run. Estimates without a T4 run: 0.2 to 0.4 s per step. The Step 1 curve (dev 0.66 at step 3000, best 0.856 near step 21,800) shows that 3000 steps (1.27 epochs) probably under-trains A. Choose the highest value that the T4 hours allow (6000 steps if a step takes about 0.2 s).
+- Order: (1) push the code, (2) run 50 steps on the T4 (`--set train.steps=50 data.max_train=2000 data.max_eval=500`) to time it and to check the fp16 path, (3) set `budget.training_steps`, (4) run the sweep.
+
 **Carry-over from earlier steps:**
 - Set `budget.training_steps` in `configs/protocol.yaml` before you train A. Use the same value for all configurations (Step 0).
 - Do not use lr 1e-4 for Ettin-17M. The dev loss is lowest near epoch 6 and then rises. Include lr values near 3e-5 in the 6-trial search (Step 1).

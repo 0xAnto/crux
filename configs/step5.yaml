@@ -1,0 +1,54 @@
+# Step 5: Architectures A, B, B-ablation, and the A-param control.
+# Run one job: python -m crux.train --config configs/step5.yaml --arch B --trial 0 --seed-index 0
+# The full plan: 4 architectures x 6 trials x 3 seeds = 72 runs. Every trial runs all 3 seeds.
+# Selection: per architecture, the trial with the best mean (over seeds) validation `selection_metric`.
+# The steps come from budget.training_steps in configs/protocol.yaml. Do not set train.steps (smoke runs only).
+
+data_config: configs/step2_data.yaml   # tokenizer, max_length, train_batch_size (32), evaluation token budget
+out_root: runs/step5
+
+model:
+  id: jhu-clsp/ettin-encoder-17m
+  attn_implementation: sdpa
+  arch: A              # A, B, or A-param (set by --arch)
+  rank: 8              # rank of the generated factors (B)
+  hyper_layers: 0      # K: B generates adapters for the top K encoder layers (0 = the head only)
+  hyper_hidden: 64     # hidden size of the hypernetwork
+
+train:
+  lr: 3.0e-5           # the encoder. Set by the trial. Not 1e-4 (Step 1: near chance)
+  new_lr_mult: 10      # new modules (head, hypernetwork, LoRA) train at lr x this value. Equal for all architectures
+  weight_decay: 0.01   # set by the trial
+  warmup_ratio: 0.06   # as in Step 1 and ModernBERT
+  max_grad_norm: 1.0
+  fp16: true           # autocast and GradScaler on CUDA only
+  eval_every: 1000     # full validation split. Selection of the checkpoint on validation only
+  log_every: 100
+  num_workers: 0       # the items are tokenized before training; a worker needs a picklable dataset (spawn, forkserver)
+  selection_metric: unseen_rule_accuracy   # the first primary metric of the protocol
+  steps: null          # smoke runs only
+  seed_index: 0
+
+data:
+  max_train: null      # smoke runs only: keep the first N records
+  max_eval: null       # smoke runs only
+
+latency:               # on the run device, forward only, fp16 on CUDA
+  warmup: 10
+  n_batch1: 200
+  n_batches: 50
+
+architectures:
+  A: {arch: A}
+  B: {arch: B, hyper_layers: 0}
+  B-abl: {arch: B, hyper_layers: 2}     # adapters for the top 2 of 7 encoder layers
+  A-param: {arch: A-param, hyper_layers: 0}   # a static LoRA with the trainable parameters of B (hyper_layers 0)
+
+search:                # the same 6 trials for every architecture
+  trials:
+    - {lr: 3.0e-5, weight_decay: 0.01}
+    - {lr: 2.0e-5, weight_decay: 0.01}
+    - {lr: 4.0e-5, weight_decay: 0.01}
+    - {lr: 5.0e-5, weight_decay: 0.01}
+    - {lr: 3.0e-5, weight_decay: 0.1}
+    - {lr: 2.0e-5, weight_decay: 0.1}
