@@ -70,7 +70,7 @@ def live_vms():
 
 
 PROBE = """
-import glob, json, os, subprocess
+import glob, json, os, subprocess, time
 done = sorted(p[len('{runs}/'):-len('/metrics.json')] for p in glob.glob('{runs}/*/t*/s*/metrics.json'))
 busy = subprocess.run(['pgrep', '-f', 'crux.train'], capture_output=True).returncode == 0
 partial = sorted(p[len('{runs}/'):-len('/last.pt')] for p in glob.glob('{runs}/*/t*/s*/last.pt')
@@ -79,7 +79,8 @@ failed = open('/content/failed.txt').read().split() if os.path.exists('/content/
 logs = sorted(glob.glob('{runs}/*/t*/s*/train.log'), key=os.path.getmtime)
 last = open(logs[-1]).read().splitlines()[-1:] if logs else []
 print('@@' + json.dumps(dict(done=done, partial=partial, busy=busy, failed=failed, setup=os.path.exists('/content/setup.ok'),
-                             current=logs[-1][len('{runs}/'):-len('/train.log')] if logs else None, last=last)))
+                             current=logs[-1][len('{runs}/'):-len('/train.log')] if logs else None, last=last,
+                             age=time.time() - os.path.getmtime(logs[-1]) if logs else 0)))
 """
 
 SETUP = """
@@ -215,6 +216,10 @@ class Driver:
                 if p is None:
                     continue
                 info[vm] = p
+                if p["busy"] and p.get("age", 0) > self.a.stall:  # no log line for too long: stop the run
+                    vm_python(vm, "import subprocess; subprocess.run(['pkill', '-f', 'python -m crux.train']); print('@@1')")
+                    notify(f"{vm}: {p['current']} wrote no log for {p['age'] / 60:.0f} min. Stopped; the queue tries "
+                           f"it again from last.pt.")
                 for run in p["done"]:
                     if run in self.all and run not in done and self.download(vm, run):
                         done.add(run)
@@ -292,6 +297,7 @@ def main():
     ap.add_argument("--vms", type=int, default=3, help="T4 VMs at the same time (fewer if Colab refuses)")
     ap.add_argument("--chunk", type=int, default=6, help="runs given to a VM at one time")
     ap.add_argument("--tick", type=int, default=600, help="seconds between ticks")
+    ap.add_argument("--stall", type=int, default=1800, help="seconds without a train.log line before a run is stopped")
     args = ap.parse_args()
     d = Driver(args)
     d.root.mkdir(parents=True, exist_ok=True)

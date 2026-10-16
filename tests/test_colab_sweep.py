@@ -44,7 +44,11 @@ class FakeColab:
             if v["queue"]:
                 v["done"].append(v["queue"].pop(0))
             return dict(done=v["done"], partial=[], busy=bool(v["queue"]), failed=[], setup=v["setup"],
-                        current=None, last=[])
+                        current=None, last=[], age=v.get("age", 0))
+        if "pkill" in code:  # the stalled run stops; the queue tries it again
+            v["killed"] = v.get("killed", 0) + 1
+            v["age"] = 0
+            return 1
         if "git clone" in code:
             return True
         if "load_split" in code:
@@ -72,7 +76,7 @@ def make(tmp_path, monkeypatch, fake, vms=3):
         (tmp_path / "data" / "splits" / f"{s}.jsonl").write_text("{}\n")
     monkeypatch.setattr(cs.Path, "home", lambda: tmp_path)
     args = SimpleNamespace(config="configs/s.yaml", root="runs", commit="x", steps=6000, prefix="vm", vms=vms,
-                           chunk=3)
+                           chunk=3, stall=1800)
     d = cs.Driver(args)
     d.root.mkdir()
     return d
@@ -115,3 +119,16 @@ def test_wrong_budget_halts_and_stops_vms(tmp_path, monkeypatch):
             d.tick()
     assert not fake.vms
     assert "halted" in json.loads((d.root / "sweep_status.json").read_text())
+
+
+def test_a_stalled_run_is_stopped(tmp_path, monkeypatch):
+    fake = FakeColab(max_vms=1)
+    d = make(tmp_path, monkeypatch, fake, vms=1)
+    d.tick()  # creates vm0 and starts its queue
+    fake.vms["vm0"]["queue"].append("A/t1/s0")  # keep it busy
+    fake.vms["vm0"]["age"] = 1000
+    d.tick()
+    assert fake.vms["vm0"].get("killed", 0) == 0  # a quiet run below the limit is not touched
+    fake.vms["vm0"]["age"] = 4000
+    d.tick()
+    assert fake.vms["vm0"]["killed"] == 1
