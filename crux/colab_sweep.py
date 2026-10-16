@@ -227,6 +227,16 @@ class Driver:
                     if p["failed"].count(run) >= 2 and run not in self.state["failed"] and run not in done:
                         self.state["failed"].append(run)
                         notify(f"{run} failed 2 times on {vm}. See /content/queue.log on the VM.")
+        if self.a.pause:  # no new run: stop each queue, let the current run end, then stop the VM
+            for vm, p in info.items():
+                vm_python(vm, "import subprocess; subprocess.run(['pkill', '-f', 'queue.sh']); print('@@1')")
+                if not p["busy"]:
+                    colab("stop", "-s", vm, timeout=300)
+                    self.state["created"].pop(vm, None)
+                    self.state["assigned"].pop(vm, None)
+                    log(f"{vm}: paused and stopped")
+            self.save(paused=True)
+            return not any(vm in live for vm in self.state["created"])
         todo = [r for r in self.all if r not in done and r not in self.state["failed"]]
         if not todo:
             return True
@@ -297,6 +307,7 @@ def main():
     ap.add_argument("--vms", type=int, default=3, help="T4 VMs at the same time (fewer if Colab refuses)")
     ap.add_argument("--chunk", type=int, default=6, help="runs given to a VM at one time")
     ap.add_argument("--tick", type=int, default=600, help="seconds between ticks")
+    ap.add_argument("--pause", action="store_true", help="start no run; stop each VM when its current run ends")
     ap.add_argument("--stall", type=int, default=1800, help="seconds without a train.log line before a run is stopped")
     args = ap.parse_args()
     d = Driver(args)
@@ -310,6 +321,9 @@ def main():
     while True:
         try:
             if d.tick():
+                if args.pause:
+                    notify(f"Sweep paused: {len(d.done())}/{len(d.all)} runs done, all VMs stopped.")
+                    return
                 d.finish()
                 return
         except SystemExit:

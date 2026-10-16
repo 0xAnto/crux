@@ -45,6 +45,9 @@ class FakeColab:
                 v["done"].append(v["queue"].pop(0))
             return dict(done=v["done"], partial=[], busy=bool(v["queue"]), failed=[], setup=v["setup"],
                         current=None, last=[], age=v.get("age", 0))
+        if "queue.sh']" in code:  # pause: the queue stops, the current run continues
+            v["queue"] = v["queue"][:1]
+            return 1
         if "pkill" in code:  # the stalled run stops; the queue tries it again
             v["killed"] = v.get("killed", 0) + 1
             v["age"] = 0
@@ -76,7 +79,7 @@ def make(tmp_path, monkeypatch, fake, vms=3):
         (tmp_path / "data" / "splits" / f"{s}.jsonl").write_text("{}\n")
     monkeypatch.setattr(cs.Path, "home", lambda: tmp_path)
     args = SimpleNamespace(config="configs/s.yaml", root="runs", commit="x", steps=6000, prefix="vm", vms=vms,
-                           chunk=3, stall=1800)
+                           chunk=3, stall=1800, pause=False)
     d = cs.Driver(args)
     d.root.mkdir()
     return d
@@ -132,3 +135,17 @@ def test_a_stalled_run_is_stopped(tmp_path, monkeypatch):
     fake.vms["vm0"]["age"] = 4000
     d.tick()
     assert fake.vms["vm0"]["killed"] == 1
+
+
+def test_pause_finishes_the_current_run_then_stops_all_vms(tmp_path, monkeypatch):
+    fake = FakeColab(max_vms=2)
+    d = make(tmp_path, monkeypatch, fake, vms=2)
+    d.tick()
+    d.tick()
+    n = len(d.done())
+    d.a.pause = True
+    for _ in range(5):
+        if d.tick():
+            break
+    assert not fake.vms
+    assert n < len(d.done()) < len(d.all)  # the current runs arrived, the queued runs did not start
