@@ -1,4 +1,4 @@
-"""Run a sweep on Colab T4 VMs with the `colab` CLI, unattended and restart-safe.
+"""Run a sweep on Colab L4 VMs with the `colab` CLI, unattended and restart-safe.
 
 Run (it keeps running after the terminal or Claude Code closes; run the same command again after a reboot):
   nohup caffeinate -i .venv/bin/python -m crux.colab_sweep >> runs/step5/driver.out 2>&1 &
@@ -265,9 +265,9 @@ class Driver:
                 rest = [r for r in pool if r not in own]
                 mine, pool = (own + rest)[:self.a.chunk], (own + rest)[self.a.chunk:]
             if vm not in live:
-                ok, out = colab("new", "-s", vm, "--gpu", "T4", timeout=900)
+                ok, out = colab("new", "-s", vm, "--gpu", "L4", timeout=900)
                 if not ok:
-                    log(f"{vm}: no T4 now: {out[-200:]}")
+                    log(f"{vm}: no L4 now: {out[-200:]}")
                     pool = mine + pool
                     continue
                 self.state["created"][vm] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -304,7 +304,7 @@ def main():
     ap.add_argument("--commit", default="eb257e2", help="the commit that the VMs check out")
     ap.add_argument("--steps", type=int, default=6000, help="expected budget.training_steps in metrics.json")
     ap.add_argument("--prefix", default="crux5-s", help="VM names are <prefix>0, <prefix>1, ...")
-    ap.add_argument("--vms", type=int, default=3, help="T4 VMs at the same time (fewer if Colab refuses)")
+    ap.add_argument("--vms", type=int, default=3, help="L4 VMs at the same time (fewer if Colab refuses)")
     ap.add_argument("--chunk", type=int, default=6, help="runs given to a VM at one time")
     ap.add_argument("--tick", type=int, default=600, help="seconds between ticks")
     ap.add_argument("--pause", action="store_true", help="start no run; stop each VM when its current run ends")
