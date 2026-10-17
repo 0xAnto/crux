@@ -135,13 +135,42 @@ Do the steps in sequence. Do not start a step before the previous step is comple
 
 ## Step 5: Architecture A (Official) and Architecture B: Rule Compiler
 
-- [ ] Train the official A on the frozen train split (3 seeds).
-- [ ] Extend Ettin-17M with an instruction-conditioned rank-8 hypernetwork. The hypernetwork generates low-rank parameters for the decision head.
-- [ ] Ablation: the hypernetwork also generates low-rank adapters for the top K encoder layers.
-- [ ] Control **A-param**: give A an unconditioned LoRA with the same number of trainable parameters as B. This control shows if the conditioning helps, or only the extra parameters help.
-- [ ] Train with the same data and compute budget as A. Compare the accuracy, the generalization, the latency, and the parameter count on the validation split.
+- [x] Train the official A on the frozen train split (3 seeds).
+- [x] Extend Ettin-17M with an instruction-conditioned rank-8 hypernetwork. The hypernetwork generates low-rank parameters for the decision head.
+- [x] Ablation: the hypernetwork also generates low-rank adapters for the top K encoder layers.
+- [x] Control **A-param**: give A an unconditioned LoRA with the same number of trainable parameters as B. This control shows if the conditioning helps, or only the extra parameters help.
+- [x] Train with the same data and compute budget as A. Compare the accuracy, the generalization, the latency, and the parameter count on the validation split.
 
-**In progress (2026-10-16, no results yet):**
+**Done (2026-10-18):**
+- Sweep: 72 of 72 runs on Colab L4, 0 failed (2026-10-17 09:06 to 2026-10-18 04:41, about 55 compute units). Full output of `python -m crux.aggregate runs/step5`: `runs/step5/aggregate.txt`.
+- Selected trials (best mean validation unseen_rule_accuracy over 3 seeds): A t0, B t0, B-abl t0 (lr 3e-5, wd 0.01), A-param t4 (lr 3e-5, wd 0.1). All trials with lr 5e-5 or more stay near chance for most seeds.
+
+Validation, selected trial, mean ± std over 3 seeds (higher is better; majority baseline 0.333, dev_id majority 0.347):
+
+| Arch | unseen_rule_accuracy | counterfactual_paired_accuracy | dev_id accuracy |
+|---|---|---|---|
+| A | 0.561 ± 0.192 | 0.388 ± 0.224 | 0.598 ± 0.206 |
+| B | 0.483 ± 0.087 | 0.285 ± 0.102 | 0.483 ± 0.100 |
+| B-abl | 0.603 ± 0.099 | 0.432 ± 0.117 | 0.636 ± 0.155 |
+| A-param | 0.618 ± 0.058 | 0.453 ± 0.075 | 0.640 ± 0.083 |
+
+Difference to A, unseen_rule_accuracy, 95% paired bootstrap CI over records (higher is better): B −0.079 [−0.086, −0.072], B-abl +0.041 [+0.035, +0.048], A-param +0.056 [+0.050, +0.063].
+
+Parameters and latency on the L4, batch size 1 (lower is better for latency):
+
+| Arch | params_total | Extra vs A | p50 ms (lower is better) | p95 ms (lower is better) |
+|---|---|---|---|---|
+| A | 16,863,745 | 0 | 9.66 | 10.28 |
+| B | 17,146,945 | 283,200 | 10.82 | 11.53 |
+| B-abl | 18,744,385 | 1,880,640 | 11.70 | 12.42 |
+| A-param | 17,146,625 | 282,880 | 13.90 | 14.86 |
+
+- Result: the instruction conditioning does not help at this budget. B (head only) is worse than A. B-abl is better than A, but A-param, with the same extra parameters as B and 6.6 times fewer than B-abl, is better than B-abl. The gain comes from the extra encoder parameters, not from the conditioning.
+- Limitation: the seed spread is large (A std 0.192: seeds 0.694, 0.341, 0.649). The bootstrap CI covers the record sample only, not the seed variance. All differences to A are smaller than the std of A, so the order of A, B-abl, and A-param is weak evidence. Per seed pair (s0 / s1 / s2), B is lower than A in 2 of 3 pairs (0.536 / 0.530 / 0.382 against 0.694 / 0.341 / 0.649).
+- Limitation: 6000 steps is short. Many runs stay at chance for 2,000 to 4,000 steps, and some never leave chance. More steps would probably decrease the seed spread.
+- A-param latency includes the unmerged LoRA. A merge of the static LoRA into the weights gives the latency of A.
+
+**Notes from the run:**
 - Files: `crux/models.py` (A, B, B-ablation `hyper_layers: K`, A-param), `crux/train.py` (train, resume, evaluate, latency), `crux/aggregate.py` (selection, mean ± std, paired bootstrap CI), `configs/step5.yaml` (4 architectures, 6 trials), `tests/test_models.py`, `notebooks/step5_train.ipynb`.
 - Budget: `budget.training_steps` is 6000 (2.5 epochs), frozen on 2026-10-16. The Step 1 curve (dev 0.66 at step 3000, best 0.856 near step 21,800) shows that 3000 steps probably under-trains A. T4 timing run (200 steps, seconds per step, lower is better): A 0.320, B 0.334, B-abl 0.340, A-param 0.413. No error, no OOM (peak 11.7 GiB), no non-finite loss. Estimate for 72 runs with evaluation: about 50 T4 GPU-hours.
 - B-abl fix (commit `293b426`): on the T4, all 3 seeds of B-abl trial 0 stopped with a non-finite fp16 loss (steps 507 to 1025). The generated encoder factors grew to 25 times their init scale, and the Wo delta drove the residual stream to the fp16 limit. The encoder factors are now soft-bounded (`limit * tanh(v / limit)`). A, B, and A-param stay bit-identical to `b7220bf` (test), so their runs stay valid. The 3 failed B-abl runs start again from step 0.
