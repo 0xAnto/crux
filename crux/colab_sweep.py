@@ -301,7 +301,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/step5.yaml")
     ap.add_argument("--root", default="runs/step5")
-    ap.add_argument("--commit", default="eb257e2", help="the commit that the VMs check out")
+    ap.add_argument("--commit", default="c4f3795", help="the commit that the VMs check out")
     ap.add_argument("--steps", type=int, default=12000, help="expected budget.training_steps in metrics.json")
     ap.add_argument("--prefix", default="crux5-s", help="VM names are <prefix>0, <prefix>1, ...")
     ap.add_argument("--vms", type=int, default=3, help="L4 VMs at the same time (fewer if Colab refuses)")
