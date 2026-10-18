@@ -170,7 +170,26 @@ Parameters and latency on the L4, batch size 1 (lower is better for latency):
 - Limitation: 6000 steps is short. Many runs stay at chance for 2,000 to 4,000 steps, and some never leave chance. More steps would probably decrease the seed spread.
 - A-param latency includes the unmerged LoRA. A merge of the static LoRA into the weights gives the latency of A.
 
-**Rerun at 12000 steps (2026-10-18, in progress):** the results above are from 6000 steps and 6 trials. The seed spread there is too large for a fair comparison. The rerun uses `training_steps` 12000 and one trial (lr 3e-5, wd 0.01) for all 4 architectures: 12 runs, about 18 L4 compute units. Steps 6 and 7 use the same budget and the same single trial, so the credit (67.8 units on 2026-10-18) covers Steps 5 to 7. The 6000-step runs are in `runs/step5_6000/`.
+**Rerun at 12000 steps (2026-10-18), the final Step 5 result:** the results above are from 6000 steps and 6 trials, and their seed spread is too large for a fair comparison. The rerun uses `training_steps` 12000 and one trial (lr 3e-5, wd 0.01) for all 4 architectures: 12 runs on Colab L4, 0 failed, 18 compute units (balance after: 49.8). Steps 6 and 7 use the same budget and the same single trial. The 6000-step runs are in `runs/step5_6000/`. Full output: `runs/step5/aggregate.txt`.
+
+Validation, mean ± std over 3 seeds (higher is better; majority baseline 0.333, dev_id majority 0.347):
+
+| Arch | unseen_rule_accuracy | Seeds s0 / s1 / s2 | counterfactual_paired_accuracy | dev_id accuracy |
+|---|---|---|---|---|
+| A | 0.661 ± 0.067 | 0.589 / 0.720 / 0.675 | 0.504 ± 0.087 | 0.711 ± 0.079 |
+| B | 0.661 ± 0.058 | 0.596 / 0.708 / 0.678 | 0.504 ± 0.082 | 0.708 ± 0.092 |
+| B-abl | 0.584 ± 0.192 | 0.703 / 0.687 / 0.363 | 0.413 ± 0.229 | 0.640 ± 0.231 |
+| A-param | 0.576 ± 0.189 | 0.673 / 0.359 / 0.697 | 0.404 ± 0.224 | 0.625 ± 0.214 |
+
+Difference to A, unseen_rule_accuracy, 95% paired bootstrap CI over records (higher is better): B −0.001 [−0.007, +0.005], B-abl −0.077 [−0.084, −0.071], A-param −0.085 [−0.091, −0.079].
+
+Latency on the L4, batch size 1, p50 ms (lower is better): A 9.53, B 10.68, B-abl 11.93, A-param 14.37 (A-param with the unmerged LoRA).
+
+- Result: B is equal to A (the CI includes 0) at 12% more latency. The instruction-conditioned head gives no gain.
+- B-abl and A-param (extra encoder parameters) stay at chance in 1 of 3 seeds. Their other 2 seeds (B-abl 0.703, 0.687; A-param 0.673, 0.697) are at or above the best seeds of A. So the extra encoder parameters can help, but they make the training less reliable. The conditioning (B-abl) gives no gain over the static control (A-param).
+- Compared with 6000 steps: A rises from 0.561 ± 0.192 to 0.661 ± 0.067, and no run of A or B stays at chance. 8 of 12 runs have their best checkpoint before step 12000, so the curves are flat at the end.
+- Limitation: 3 seeds and 1 trial. The bootstrap CI covers the record sample only, not the seed variance.
+- For Step 6: C builds on B, and B equals A here. The Step 6 controls (A+CF, B+CF) must show if the counterfactual data or the consistency loss gives a gain.
 
 **Notes from the run:**
 - Files: `crux/models.py` (A, B, B-ablation `hyper_layers: K`, A-param), `crux/train.py` (train, resume, evaluate, latency), `crux/aggregate.py` (selection, mean ± std, paired bootstrap CI), `configs/step5.yaml` (4 architectures, 6 trials), `tests/test_models.py`, `notebooks/step5_train.ipynb`.
