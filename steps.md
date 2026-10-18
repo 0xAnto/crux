@@ -170,6 +170,8 @@ Parameters and latency on the L4, batch size 1 (lower is better for latency):
 - Limitation: 6000 steps is short. Many runs stay at chance for 2,000 to 4,000 steps, and some never leave chance. More steps would probably decrease the seed spread.
 - A-param latency includes the unmerged LoRA. A merge of the static LoRA into the weights gives the latency of A.
 
+**Rerun at 12000 steps (2026-10-18, in progress):** the results above are from 6000 steps and 6 trials. The seed spread there is too large for a fair comparison. The rerun uses `training_steps` 12000 and one trial (lr 3e-5, wd 0.01) for all 4 architectures: 12 runs, about 18 L4 compute units. Steps 6 and 7 use the same budget and the same single trial, so the credit (67.8 units on 2026-10-18) covers Steps 5 to 7. The 6000-step runs are in `runs/step5_6000/`.
+
 **Notes from the run:**
 - Files: `crux/models.py` (A, B, B-ablation `hyper_layers: K`, A-param), `crux/train.py` (train, resume, evaluate, latency), `crux/aggregate.py` (selection, mean ± std, paired bootstrap CI), `configs/step5.yaml` (4 architectures, 6 trials), `tests/test_models.py`, `notebooks/step5_train.ipynb`.
 - Budget: `budget.training_steps` is 6000 (2.5 epochs), frozen on 2026-10-16. The Step 1 curve (dev 0.66 at step 3000, best 0.856 near step 21,800) shows that 3000 steps probably under-trains A. T4 timing run (200 steps, seconds per step, lower is better): A 0.320, B 0.334, B-abl 0.340, A-param 0.413. No error, no OOM (peak 11.7 GiB), no non-finite loss. Estimate for 72 runs with evaluation: about 50 T4 GPU-hours.

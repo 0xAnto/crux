@@ -1,6 +1,6 @@
 # Step 5: Architectures A, B, B-ablation, and the A-param control.
 # Run one job: python -m crux.train --config configs/step5.yaml --arch B --trial 0 --seed-index 0
-# The full plan: 4 architectures x 6 trials x 3 seeds = 72 runs. Every trial runs all 3 seeds.
+# The full plan: 4 architectures x 1 trial x 3 seeds = 12 runs (the 6-trial plan at 6000 steps: steps.md, Step 5). Every trial runs all 3 seeds.
 # Selection: per architecture, the trial with the best mean (over seeds) validation `selection_metric`.
 # The steps come from budget.training_steps in configs/protocol.yaml. Do not set train.steps (smoke runs only).
 
@@ -44,11 +44,6 @@ architectures:
   B-abl: {arch: B, hyper_layers: 2}     # adapters for the top 2 of 7 encoder layers
   A-param: {arch: A-param, hyper_layers: 0}   # a static LoRA with the trainable parameters of B (hyper_layers 0)
 
-search:                # the same 6 trials for every architecture
+search:                # the same trial for every architecture
   trials:
     - {lr: 3.0e-5, weight_decay: 0.01}
-    - {lr: 6.0e-5, weight_decay: 0.01}   # was 2e-5; changed 2026-10-16 before any run of this trial (steps.md, Step 5)
-    - {lr: 4.0e-5, weight_decay: 0.01}
-    - {lr: 5.0e-5, weight_decay: 0.01}
-    - {lr: 3.0e-5, weight_decay: 0.1}
-    - {lr: 7.0e-5, weight_decay: 0.01}   # was 2e-5 with weight_decay 0.1; changed as trial 1
