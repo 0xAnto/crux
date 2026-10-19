@@ -177,7 +177,7 @@ class Driver:
         sys.exit(1)
 
     def setup(self, vm):
-        if vm_python(vm, SETUP.format(repo=REPO, commit=self.a.commit), timeout=1200) is None:
+        if vm_python(vm, SETUP.format(repo=REPO, commit=self.a.commit), timeout=300) is None:  # setup takes about 30 s; a hung exec blocks the probes of all VMs, and Colab stops an idle VM
             return False
         cache = Path.home() / ".cache" / "crux_sweep"
         cache.mkdir(parents=True, exist_ok=True)
@@ -190,7 +190,7 @@ class Driver:
             if not ok:
                 log(f"{vm}: upload of {s} failed: {out[-300:]}")
                 return False
-        n = vm_python(vm, VERIFY.format(names=" ".join(f"{s}.jsonl.gz" for s in SPLITS), splits=SPLITS), 600)
+        n = vm_python(vm, VERIFY.format(names=" ".join(f"{s}.jsonl.gz" for s in SPLITS), splits=SPLITS), 300)
         log(f"{vm}: setup {'done' if n else 'failed'}: {n}")
         return n is not None
 
