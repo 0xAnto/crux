@@ -2,7 +2,7 @@ import torch
 
 import pytest
 
-from crux.data.batching import EncodedDataset, make_dataloader
+from crux.data.batching import EncodedDataset, FixedBatchSampler, UnitBatchSampler, make_dataloader, pair_units
 
 CLS, SEP, PAD = 1, 2, 0
 CFG = {"max_length": 12, "max_state_length": 6, "max_instruction_length": 6, "max_option_length": 4,
@@ -133,3 +133,55 @@ def test_train_batches_have_a_fixed_size_and_the_same_records_in_all_modes():
     assert batches[0] == [b["ids"] for b in make_dataloader(records, tok, CFG, "joint", train=True, seed=13)]
     loaders[0].batch_sampler.set_epoch(1)
     assert [b["ids"] for b in loaders[0]] != batches[0]
+
+
+def unit_records(sizes):
+    """Records of units with 2, 4, or 6 records (1 to 3 pairs), as in the train split, in a mixed-up order."""
+    recs = []
+    for u, size in enumerate(sizes):
+        for p in range(size // 2):
+            for role in ("orig", "edit"):
+                meta = {"unit_id": f"u{u}", "pair_id": f"u{u}-t{p}", "pair_role": role, "paraphrase_group": f"u{u}-{role}"}
+                recs.append({**rec(len(recs), ["True", "False"], 0, "binary"), "meta": meta})
+    return recs[::-1]
+
+
+def test_pair_units_put_the_orig_record_before_the_edit_record_of_each_pair():
+    recs = unit_records([2, 4, 6])
+    units = pair_units(recs)
+    assert sorted(map(len, units)) == [2, 4, 6]
+    for u in units:
+        assert len({recs[i]["meta"]["unit_id"] for i in u}) == 1
+        assert [recs[i]["meta"]["pair_role"] for i in u] == ["orig", "edit"] * (len(u) // 2)
+        assert [recs[i]["meta"]["pair_id"] for i in u[::2]] == [recs[i]["meta"]["pair_id"] for i in u[1::2]]
+
+
+def test_unit_batches_keep_each_pair_in_one_batch_in_a_new_order_for_each_epoch():
+    recs = unit_records([2, 4, 6, 2, 6, 4, 4, 2, 6])  # 36 records, batch 8: units cross the batch cuts
+    units = pair_units(recs)
+    sampler = UnitBatchSampler(units, 8, seed=13)
+    epochs = []
+    for epoch in range(2):
+        sampler.set_epoch(epoch)
+        batches = list(sampler)
+        epochs.append(batches)
+        assert sorted(i for b in batches for i in b) == list(range(len(recs)))
+        assert [len(b) for b in batches] == [8, 8, 8, 8, 4]
+        for b in batches:
+            for orig, edit in zip(b[::2], b[1::2]):
+                assert recs[orig]["meta"]["pair_id"] == recs[edit]["meta"]["pair_id"]
+                assert (recs[orig]["meta"]["pair_role"], recs[edit]["meta"]["pair_role"]) == ("orig", "edit")
+    assert epochs[0] != epochs[1]
+    again = UnitBatchSampler(pair_units(recs), 8, seed=13)
+    assert list(again) == epochs[0]
+    assert len(sampler) == len(FixedBatchSampler(len(recs), 8)) == 5
+
+
+def test_paired_false_keeps_the_fixed_batches_of_step_5():
+    recs = unit_records([2, 4, 6])
+    tok = WordTokenizer()
+    plain = make_dataloader(recs, tok, CFG, "joint", train=True, seed=13)
+    paired = make_dataloader(recs, tok, CFG, "joint", train=True, seed=13, paired=True)
+    assert isinstance(plain.batch_sampler, FixedBatchSampler) and not isinstance(plain.batch_sampler, UnitBatchSampler)
+    assert list(plain.batch_sampler) == list(FixedBatchSampler(len(recs), CFG["train_batch_size"], 13))
+    assert isinstance(paired.batch_sampler, UnitBatchSampler) and len(paired) == len(plain)

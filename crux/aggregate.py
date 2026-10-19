@@ -21,7 +21,7 @@ from crux.metrics import _leaked, seen_ids
 from crux.splits import load_split
 
 ROOT = Path(__file__).resolve().parents[1]
-SHOWN = ("unseen_rule_accuracy", "paired_accuracy", "accuracy", "ece")
+SHOWN = ("unseen_rule_accuracy", "paired_accuracy", "accuracy", "paraphrase_consistency", "ece")
 LOWER_IS_BETTER = {"ece"}
 
 
@@ -73,15 +73,16 @@ def hits(run_dir):
     return np.load(run_dir / "val_probs.npz")["hits"]
 
 
-def aggregate(root, metric="unseen_rule_accuracy"):
+def aggregate(root, metric="unseen_rule_accuracy", ref="A"):
+    """`ref`: the reference of the paired bootstrap (the protocol uses A; Step 6 also compares with B and B+CF)."""
     root = Path(root)
     protocol = yaml.safe_load((ROOT / "configs" / "protocol.yaml").read_text())
     stats = protocol["statistics"]
     runs, n_seeds = load_runs(root), len(protocol["seeds"])
     chosen = select(runs, metric, n_seeds)
-    if "A" not in chosen:
-        raise SystemExit("A has no trial with all seeds.")
-    out = {"metric": metric, "selected": chosen, "architectures": {}, "difference_to_A": {}}
+    if "A" not in chosen or ref not in chosen:
+        raise SystemExit(f"A or {ref} has no trial with all seeds.")
+    out = {"metric": metric, "selected": chosen, "architectures": {}, f"difference_to_{ref}": {}}
     print(f"Selection: the trial with the best mean validation {metric} over {n_seeds} seeds (higher is better).")
     for arch, trials in sorted(runs.items()):
         incomplete = sorted(t for t, s in trials.items() if len(s) < n_seeds)
@@ -117,30 +118,30 @@ def aggregate(root, metric="unseen_rule_accuracy"):
         gap = rows["A-param"]["params"]["params_trainable"] - rows["B"]["params"]["params_trainable"]
         print(f"\nA-param minus B trainable parameters: {gap}")
         out["a_param_gap"] = gap
-    seeds = sorted(runs["A"][chosen["A"]])
+    seeds = sorted(runs[ref][chosen[ref]])
     val = load_split("validation")
     seen = seen_ids(load_split("train"))
     unseen = [i for i, r in enumerate(val) if not _leaked(r, seen)]
     units = {"unseen_rule_accuracy": lambda h: h[:, unseen], "counterfactual_paired_accuracy": lambda h: pair_hits(val, h),
              "accuracy": lambda h: h}
-    hits_a = np.stack([hits(root / "A" / f"t{chosen['A']}" / f"s{s}") for s in seeds])
-    print(f"\nDifference to A, {stats['bootstrap']['ci_level']:.0%} paired bootstrap CI "
+    hits_a = np.stack([hits(root / ref / f"t{chosen[ref]}" / f"s{s}") for s in seeds])
+    print(f"\nDifference to {ref}, {stats['bootstrap']['ci_level']:.0%} paired bootstrap CI "
           f"({stats['bootstrap']['resamples']} resamples, mean over {len(seeds)} seed pairs; higher is better)")
     print("| arch | metric | difference | CI low | CI high | CI excludes 0 |")
     print("|---|---|---|---|---|---|")
     for arch, t in chosen.items():
-        if arch == "A":
+        if arch == ref:
             continue
         if sorted(runs[arch][t]) != seeds:
-            raise SystemExit(f"{arch} and A need the same seed indices.")
+            raise SystemExit(f"{arch} and {ref} need the same seed indices.")
         hx = np.stack([hits(root / arch / f"t{t}" / f"s{s}") for s in seeds])
         for name, unit in units.items():
             d, lo, hi = bootstrap_ci(unit(hx), unit(hits_a), stats["bootstrap"]["resamples"], stats["bootstrap"]["seed"],
                                      stats["bootstrap"]["ci_level"])
-            out["difference_to_A"].setdefault(arch, {})[name] = {"difference": d, "ci_low": lo, "ci_high": hi,
+            out[f"difference_to_{ref}"].setdefault(arch, {})[name] = {"difference": d, "ci_low": lo, "ci_high": hi,
                                                                  "excludes_0": bool(lo > 0 or hi < 0)}
             print(f"| {arch} | {name} | {d:+.4f} | {lo:+.4f} | {hi:+.4f} | {'yes' if lo > 0 or hi < 0 else 'no'} |")
-    (root / "aggregate.json").write_text(json.dumps(out, indent=1, default=float))
+    (root / ("aggregate.json" if ref == "A" else f"aggregate_ref_{ref}.json")).write_text(json.dumps(out, indent=1, default=float))
     return out
 
 
@@ -148,5 +149,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
     ap.add_argument("--metric", default="unseen_rule_accuracy")
+    ap.add_argument("--ref", default="A", help="the reference architecture of the paired bootstrap")
     args = ap.parse_args()
-    aggregate(args.root, args.metric)
+    aggregate(args.root, args.metric, args.ref)

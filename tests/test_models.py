@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ from transformers import ModernBertConfig, ModernBertModel
 
 from crux.aggregate import bootstrap_ci
 from crux.models import Hypernet, Lora, Scorer, build_model, count_params, span_mean, static_ranks
-from crux.train import train
+from crux.train import consistency_loss, load_config, paraphrase_rows, train
 
 CLS, SEP, PAD = 1, 2, 0
 
@@ -313,3 +314,62 @@ def test_encoder_adapter_factors_are_bounded():
     assert len(seen) == len(m.adapted) == 4
     for lora, (a, b) in zip(m.adapted, seen):
         assert a.abs().max() <= lora.in_features ** -0.5 + 1e-6 and b.abs().max() <= lora.out_features ** -0.5 + 1e-6
+
+
+def test_consistency_loss_is_the_mean_js_divergence_of_a_group_and_ignores_padded_options():
+    p = torch.tensor([[0.8, 0.2], [0.2, 0.8]])
+    expected = 0.8 * math.log(1.6) + 0.2 * math.log(0.4)  # KL of each row to the mean [0.5, 0.5]; equal for both rows
+    logits = torch.cat([p.log(), torch.full((2, 1), -torch.inf)], 1).requires_grad_()
+    mask = torch.tensor([[True, True, False]] * 2)
+    loss = consistency_loss(logits, mask, [[0, 1]])
+    loss.backward()
+    assert loss.item() == pytest.approx(expected, abs=1e-6)
+    assert torch.isfinite(logits.grad[:, :2]).all() and logits.grad[:, :2].abs().sum() > 0
+    assert consistency_loss(p.log(), mask[:, :2], [[0, 1]]).item() == pytest.approx(expected, abs=1e-6)
+    assert consistency_loss(p.log()[[0, 0]], mask[:, :2], [[0, 1]]).item() == pytest.approx(0, abs=1e-7)
+    assert consistency_loss(p.log(), mask[:, :2], []).item() == 0
+
+
+def test_paraphrase_rows_returns_only_the_groups_with_two_rows_in_the_batch():
+    group_of = {"a": "g1", "b": "g1", "c": "g2", "d": None, "e": "g3", "f": "g3", "g": "g3"}
+    assert paraphrase_rows(["a", "c", "b", "d", "e", "x"], group_of) == [[0, 2]]
+    assert paraphrase_rows(["e", "a", "f", "g"], group_of) == [[0, 2, 3]]
+
+
+def test_step6_architectures_set_the_train_keys_and_keep_the_step5_defaults_of_other_keys():
+    c = load_config("configs/step6.yaml", "C", 0)
+    assert c["model"]["arch"] == "B" and c["train"]["paired"] is True and c["train"]["consistency_weight"] == 1.0
+    for arch, model_arch in (("A+CF", "A"), ("B+CF", "B")):
+        c = load_config("configs/step6.yaml", arch, 0)
+        assert c["model"]["arch"] == model_arch and c["train"]["paired"] is True
+        assert c["train"]["consistency_weight"] == 0.0 and c["train"]["lr"] == 3.0e-5
+    assert "train" not in c["model"]
+
+
+def paired_records(n_units):
+    """Units of 4 records (2 pairs): the 2 orig records and the 2 edit records are paraphrases of each other."""
+    recs = []
+    for u in range(n_units):
+        for p in range(2):
+            for role in ("orig", "edit"):
+                meta = {"unit_id": f"u{u}", "pair_id": f"u{u}-t{p}", "pair_role": role, "paraphrase_group": f"u{u}-{role}"}
+                recs.append({"id": f"r{len(recs)}", "source": "t", "task_type": "multi_choice",
+                             "state": f"s{p} s{u % 3} s1", "instruction": f"i{u % 2} i1 Question: q{u}",
+                             "options": ["o0", "o1", "o2"], "target": (u + p) % 3, "meta": meta})
+    return recs
+
+
+def test_train_with_paired_batches_adds_the_consistency_loss_only_for_a_positive_weight(tmp_path):
+    runs = {}
+    for weight in (0.0, 1.0):
+        cfg = {**TCFG, "train": {**TCFG["train"], "paired": True, "consistency_weight": weight}}
+        data = {"train": paired_records(3), "validation": tiny_records(6, 100), "dev_id": tiny_records(4, 200)}
+        out = train(cfg, data, WordTokenizer(), Scorer(tiny_encoder(), "B", hyper_layers=1), tmp_path / str(weight),
+                    torch.device("cpu"), 3, 13)
+        log = [j for j in map(json.loads, (tmp_path / str(weight) / "train.log").read_text().splitlines()) if "loss" in j]
+        assert out["paired"] is True and out["consistency_weight"] == weight
+        assert all(math.isfinite(j["loss"]) for j in log)
+        runs[weight] = (log, np.load(tmp_path / str(weight) / "val_probs.npz")["probs"])
+    assert all("consistency" not in j for j in runs[0.0][0])
+    assert all(math.isfinite(j["consistency"]) and j["consistency"] > 0 for j in runs[1.0][0])
+    assert not np.allclose(runs[0.0][1], runs[1.0][1], atol=1e-6)  # the consistency loss changes the weights

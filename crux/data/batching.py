@@ -234,16 +234,49 @@ class FixedBatchSampler(Sampler):
         return -(-self.n // self.batch_size)
 
 
-def make_dataloader(records, tokenizer, cfg, mode, joint_options=False, train=False, seed=0):
+class UnitBatchSampler(FixedBatchSampler):
+    """Paired counterfactual training (Step 6): FixedBatchSampler, but it shuffles whole units, not records.
+
+    `units` holds the record indices of each unit, in pair order (orig, edit, orig, edit, ...). The sampler
+    puts the units in a new random order for each epoch, joins them, and cuts batches of batch_size records.
+    A unit has an even number of records, so with an even batch_size a cut never separates the two members
+    of a pair. A cut can separate the paraphrases of a unit. The records and len() are those of FixedBatchSampler.
+    """
+
+    def __init__(self, units, batch_size, seed=0):
+        super().__init__(sum(map(len, units)), batch_size, seed)
+        self.units = units
+
+    def __iter__(self):
+        units = list(self.units)
+        random.Random(self.seed * 1_000_003 + self.epoch).shuffle(units)
+        idx = [i for u in units for i in u]
+        return iter([idx[i:i + self.batch_size] for i in range(0, self.n, self.batch_size)])
+
+
+def pair_units(records):
+    """Record indices of each unit (`meta.unit_id`), in pair order: the orig and the edit record of each pair
+    side by side. A record without a unit_id is a unit of its own."""
+    units = {}
+    for i, r in enumerate(records):
+        m = r.get("meta", {})
+        units.setdefault(m.get("unit_id", r["id"]), []).append((m.get("pair_id", ""), m.get("pair_role") != "orig", i))
+    return [[i for *_, i in sorted(u)] for u in units.values()]
+
+
+def make_dataloader(records, tokenizer, cfg, mode, joint_options=False, train=False, seed=0, paired=False):
     """Return a DataLoader of padded batches. cfg holds the keys of configs/step2_data.yaml.
 
     train=True: FixedBatchSampler with cfg["train_batch_size"] records per batch (equal budget for all
-    modes). Call loader.batch_sampler.set_epoch(epoch) at the start of each epoch.
+    modes), or with paired=True the UnitBatchSampler (Step 6). Call loader.batch_sampler.set_epoch(epoch)
+    at the start of each epoch.
     train=False: TokenBudgetSampler with cfg["max_tokens"] (evaluation).
     loader.dataset.truncated holds the truncation counts. One process only (no DDP).
     """
     ds = EncodedDataset(records, tokenizer, cfg, mode, joint_options)
-    if train:
+    if train and paired:
+        sampler = UnitBatchSampler(pair_units(records), cfg["train_batch_size"], seed)
+    elif train:
         sampler = FixedBatchSampler(len(ds), cfg["train_batch_size"], seed)
     else:
         sampler = TokenBudgetSampler(ds.shapes, ds.row_size, cfg["max_tokens"], cfg.get("max_batch_size"))

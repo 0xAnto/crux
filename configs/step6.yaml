@@ -1,0 +1,55 @@
+# Step 6: Architecture C (Counterfactual Learning) and the controls A+CF and B+CF.
+# Run one job: python -m crux.train --config configs/step6.yaml --arch C --trial 0 --seed-index 0
+# The plan: 3 architectures x 1 trial x 3 seeds = 9 runs, with the budget and the trial of the Step 5 rerun.
+# A and B come from the Step 5 rerun (runs/step5): before crux.aggregate, link runs/step6/A and runs/step6/B to them.
+# "Counterfactual data" (CF): the same frozen train split and 32 records per batch as A and B, but the batches hold
+# whole units, so the orig and the edit record of each pair (and the paraphrases of a unit) are in the same batch
+# (crux.data.batching.UnitBatchSampler). A and B saw the same records in a random order, without the pairs.
+# The steps come from budget.training_steps in configs/protocol.yaml. Do not set train.steps (smoke runs only).
+
+data_config: configs/step2_data.yaml   # tokenizer, max_length, train_batch_size (32), evaluation token budget
+out_root: runs/step6
+
+model:
+  id: jhu-clsp/ettin-encoder-17m
+  attn_implementation: sdpa
+  arch: A              # A, B, or A-param (set by --arch)
+  rank: 8              # rank of the generated factors (B)
+  hyper_layers: 0      # K: B generates adapters for the top K encoder layers (0 = the head only)
+  hyper_hidden: 64     # hidden size of the hypernetwork
+
+train:
+  lr: 3.0e-5           # the encoder. Set by the trial. Not 1e-4 (Step 1: near chance)
+  new_lr_mult: 1       # new modules (head, hypernetwork, LoRA) train at lr x this value. Equal for all architectures. Not 10 (steps.md, Step 5)
+  weight_decay: 0.01   # set by the trial
+  warmup_ratio: 0.06   # as in Step 1 and ModernBERT
+  max_grad_norm: 1.0
+  fp16: true           # autocast and GradScaler on CUDA only
+  eval_every: 1000     # full validation split. Selection of the checkpoint on validation only
+  log_every: 100
+  num_workers: 0       # the items are tokenized before training; a worker needs a picklable dataset (spawn, forkserver)
+  selection_metric: unseen_rule_accuracy   # the first primary metric of the protocol
+  steps: null          # smoke runs only
+  seed_index: 0
+  paired: false        # Step 6: unit-paired batches (set by the architecture)
+  consistency_weight: 0.0   # Step 6: weight of the paraphrase consistency loss (set by the architecture)
+
+data:
+  max_train: null      # smoke runs only: keep the first N records
+  max_eval: null       # smoke runs only
+
+latency:               # on the run device, forward only, fp16 on CUDA
+  warmup: 10
+  n_batch1: 200
+  n_batches: 50
+
+architectures:
+  # C: B + paired batches + cross-entropy + consistency loss (mean Jensen-Shannon divergence of each paraphrase group in
+  # the batch to its mean distribution). The weight 1.0 is a fixed choice: the budget has 1 trial, so it is not searched.
+  C: {arch: B, hyper_layers: 0, train: {paired: true, consistency_weight: 1.0}}
+  A+CF: {arch: A, train: {paired: true}}                    # A on the paired data of C (control: the data alone)
+  B+CF: {arch: B, hyper_layers: 0, train: {paired: true}}   # C without the consistency loss (ablation: the loss)
+
+search:                # the same trial for every architecture
+  trials:
+    - {lr: 3.0e-5, weight_decay: 0.01}

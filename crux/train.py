@@ -1,4 +1,4 @@
-"""Step 5: train and evaluate one model (A, B, B-ablation, A-param) with one trial and one seed.
+"""Steps 5 and 6: train and evaluate one model (A, B, B-ablation, A-param; C, A+CF, B+CF) with one trial and one seed.
 
 Run: python -m crux.train --config configs/step5.yaml --arch B --trial 0 --seed-index 0
 The run trains exactly `budget.training_steps` steps (configs/protocol.yaml), evaluates on validation every
@@ -8,6 +8,7 @@ best.pt, metrics.json, val_probs.npz. It reads only the train, dev_id, and valid
 """
 import argparse
 import json
+import math
 import os
 import random
 import time
@@ -110,14 +111,41 @@ def make_optimizer(model, t):
     return torch.optim.AdamW(groups)
 
 
+def consistency_loss(logits, option_mask, groups):
+    """Step 6: the mean Jensen-Shannon divergence of each paraphrase group to the mean distribution of the group.
+
+    groups: lists of batch rows with the same `meta.paraphrase_group` (2 or more rows). The rows of a group have
+    the same options, so they have the same real options. Return 0 if no group is in the batch.
+    """
+    terms = []
+    for g in groups:
+        k = int(option_mask[g[0]].sum())
+        logp = logits[g, :k].float().log_softmax(-1)
+        logm = logp.logsumexp(0) - math.log(len(g))  # log of the mean distribution, finite when all p underflow
+        terms.append((logp.exp() * (logp - logm)).sum(-1).mean())
+    return torch.stack(terms).mean() if terms else logits.new_zeros(())
+
+
+def paraphrase_rows(ids, group_of):
+    """Batch rows of each paraphrase group with 2 or more rows in this batch."""
+    rows = {}
+    for i, rid in enumerate(ids):
+        rows.setdefault(group_of.get(rid), []).append(i)
+    return [g for k, g in rows.items() if k is not None and len(g) > 1]
+
+
 def train(cfg, data, tokenizer, model, out, device, steps, seed):
     """Train `model` for `steps` steps and write the results to `out`. `data` holds the record lists
-    "train", "validation", and "dev_id". Return the content of metrics.json."""
+    "train", "validation", and "dev_id". Return the content of metrics.json.
+    Step 6: train.paired gives unit-paired batches, and train.consistency_weight > 0 adds the consistency loss."""
     t, dcfg = cfg["train"], cfg["data_cfg"]
     fp16 = bool(t["fp16"]) and device.type == "cuda"
     out.mkdir(parents=True, exist_ok=True)
     random.seed(seed), np.random.seed(seed), torch.manual_seed(seed)
-    loader = make_dataloader(data["train"], tokenizer, dcfg, "joint", True, train=True, seed=seed)
+    loader = make_dataloader(data["train"], tokenizer, dcfg, "joint", True, train=True, seed=seed,
+                             paired=t.get("paired", False))
+    lam = t.get("consistency_weight", 0.0)
+    group_of = {r["id"]: r["meta"].get("paraphrase_group") for r in data["train"]} if lam else {}
     val_loader = make_dataloader(data["validation"], tokenizer, dcfg, "joint", True)
     model.to(device)
     opt = make_optimizer(model, t)
@@ -137,7 +165,7 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
     def emit(**kw):
         log.write(json.dumps(kw) + "\n"), log.flush()
 
-    t0, run_loss, run_n = time.time() - spent, 0.0, 0
+    t0, run_loss, run_cons, run_n = time.time() - spent, 0.0, 0.0, 0
     while step < steps:
         epoch, skip = divmod(step, len(loader))
         loader.batch_sampler.set_epoch(epoch)
@@ -148,7 +176,11 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
             b = to_device(batch, device)
             with autocast(device, fp16):
                 logits = model(**b)
-            loss = F.cross_entropy(logits.float(), b["labels"])
+            loss = ce = F.cross_entropy(logits.float(), b["labels"])
+            if lam:
+                cons = consistency_loss(logits, batch["option_mask"], paraphrase_rows(batch["ids"], group_of))  # CPU mask: no sync
+                loss = ce + lam * cons
+                run_cons += cons.item()
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.unscale_(opt)
@@ -157,11 +189,11 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
             step += 1
             if not torch.isfinite(loss):
                 raise RuntimeError(f"non-finite loss at step {step}")
-            run_loss, run_n = run_loss + loss.item(), run_n + 1
+            run_loss, run_n = run_loss + ce.item(), run_n + 1
             if step % t["log_every"] == 0 or step == steps:
                 emit(step=step, loss=run_loss / run_n, grad_norm=float(gnorm), lr=sched.get_last_lr()[0],
-                     seconds=time.time() - t0)
-                run_loss, run_n = 0.0, 0
+                     seconds=time.time() - t0, **({"consistency": run_cons / run_n} if lam else {}))
+                run_loss, run_cons, run_n = 0.0, 0.0, 0
             if step % t["eval_every"] == 0 or step == steps:
                 m, _ = evaluate_split(model, val_loader, data["validation"], data["train"], device, fp16)
                 emit(step=step, validation={k: m[k] for k in LOGGED if k in m})
@@ -183,7 +215,8 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
     np.savez_compressed(out / "val_probs.npz", ids=np.array([r["id"] for r in data["validation"]]), hits=hits,
                         probs=np.concatenate(probs).astype(np.float32), lens=np.array([len(p) for p in probs]))
     metrics = {"arch": cfg["model"]["arch"], "hyper_layers": cfg["model"].get("hyper_layers", 0), "seed": seed,
-               "steps": steps, "fp16": fp16, "best_step": best["step"], "train_seconds": time.time() - t0,
+               "steps": steps, "fp16": fp16, "paired": t.get("paired", False), "consistency_weight": lam,
+               "best_step": best["step"], "train_seconds": time.time() - t0,
                "n_train": len(data["train"]), "validation": val, "dev_id": dev, **count_params(model),
                "static_target": getattr(model, "static_target", None),
                "latency": latency(model, tokenizer, data["validation"], dcfg, cfg["latency"], device, fp16)}
@@ -194,8 +227,10 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
 
 def load_config(path, arch=None, trial=None, overrides=()):
     cfg = yaml.safe_load(Path(path).read_text())
-    if arch:
-        cfg["model"].update(cfg["architectures"][arch])
+    if arch:  # an architecture sets model keys, and with its `train` key also train keys (Step 6)
+        a = dict(cfg["architectures"][arch])
+        cfg["train"].update(a.pop("train", {}))
+        cfg["model"].update(a)
     if trial is not None:
         cfg["train"].update(cfg["search"]["trials"][trial])
     return apply_overrides(cfg, overrides)
