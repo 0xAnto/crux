@@ -211,10 +211,51 @@ Latency on the L4, batch size 1, p50 ms (lower is better): A 9.53, B 10.68, B-ab
 
 ## Step 6: Architecture C: Counterfactual Learning
 
-- [ ] Extend B with paired counterfactual training, the supervised decision loss, and a consistency loss for logically equivalent instructions.
-- [ ] Control **A+CF**: train A on the same counterfactual data. This control separates the effect of the data from the effect of the architecture.
-- [ ] Ablation **B+CF**: train B on the counterfactual data without the consistency loss. This ablation separates the effect of the data from the effect of the loss.
-- [ ] Compare C, B, A+CF, and B+CF on the validation split.
+- [x] Extend B with paired counterfactual training, the supervised decision loss, and a consistency loss for logically equivalent instructions.
+- [x] Control **A+CF**: train A on the same counterfactual data. This control separates the effect of the data from the effect of the architecture.
+- [x] Ablation **B+CF**: train B on the counterfactual data without the consistency loss. This ablation separates the effect of the data from the effect of the loss.
+- [x] Compare C, B, A+CF, and B+CF on the validation split.
+
+**Done (2026-10-19):**
+- Definition of "counterfactual data" (CF): the frozen train split already holds both members (orig and edit) of every pair and 1 to 3 paraphrases of each member, and A and B trained on all of them in a random order. The protocol requires the same data for all configurations. Thus CF is the order of the same records: `UnitBatchSampler` (`crux/data/batching.py`) shuffles whole units and cuts batches of 32 records, so the orig and the edit record of each pair are always in the same batch (0 of 37,823 pairs split), and the paraphrases of a unit are in the same batch (a batch cut separates about 7.4% of the paraphrase groups). The records per epoch and the batches per epoch (2,364) are those of A and B.
+- C: B + CF + cross-entropy + a consistency loss: the mean Jensen-Shannon divergence of each paraphrase group in the batch to the mean distribution of the group (`consistency_loss` in `crux/train.py`), weight 1.0. The weight is a fixed choice: the budget has 1 trial, so it is not searched. A+CF: A + CF. B+CF: B + CF, without the consistency loss.
+- Budget: the same as the Step 5 rerun: 12000 steps, 32 records per batch, 1 trial (lr 3e-5, wd 0.01), 3 seeds, Colab L4, fp16. A and B are the Step 5 runs (`runs/step6/A` and `runs/step6/B` link to `runs/step5`). A review confirmed that the unpaired path stays bit-identical to commit `c4f3795` (tiny A and B runs give byte-identical `val_probs` and `train.log`). VM software: torch 2.11.0, transformers 5.18.0 (the Step 5 versions are not recorded).
+- Sweep: 9 of 9 runs on Colab L4, 0 failed (2026-10-19 11:39 to 17:36), commit `9152dd3`. About 14.6 compute units (balance 49.78 before, 35.16 after), including a smoke run and 2 runs that started again after a lost VM. Full output: `runs/step6/aggregate.txt`, `aggregate_ref_B.txt`, `aggregate_ref_B+CF.txt`.
+
+Validation, mean ± std over 3 seeds (higher is better; majority baseline 0.333, dev_id majority 0.347):
+
+| Arch | unseen_rule_accuracy | Seeds s0 / s1 / s2 | counterfactual_paired_accuracy | paraphrase_consistency | dev_id accuracy |
+|---|---|---|---|---|---|
+| A | 0.661 ± 0.067 | 0.589 / 0.720 / 0.675 | 0.504 ± 0.087 | 0.698 ± 0.089 | 0.711 ± 0.079 |
+| B | 0.661 ± 0.058 | 0.596 / 0.708 / 0.678 | 0.504 ± 0.082 | 0.734 ± 0.062 | 0.708 ± 0.092 |
+| A+CF | 0.530 ± 0.147 | 0.652 / 0.570 / 0.367 | 0.346 ± 0.176 | 0.615 ± 0.047 | 0.557 ± 0.193 |
+| B+CF | 0.475 ± 0.109 | 0.508 / 0.563 / 0.353 | 0.279 ± 0.122 | 0.507 ± 0.078 | 0.492 ± 0.135 |
+| C | 0.504 ± 0.074 | 0.541 / 0.419 / 0.552 | 0.311 ± 0.071 | 0.569 ± 0.010 | 0.539 ± 0.117 |
+
+ECE, mean over 3 seeds (lower is better): A 0.070, B 0.082, A+CF 0.058, B+CF 0.093, C 0.063.
+
+Differences, 95% paired bootstrap CI over records (higher is better):
+
+| Contrast | Question | unseen_rule_accuracy | counterfactual_paired_accuracy |
+|---|---|---|---|
+| C − A | the protocol test | −0.158 [−0.165, −0.151] | −0.193 [−0.202, −0.184] |
+| C − B | C against its base | −0.157 [−0.164, −0.150] | −0.193 [−0.202, −0.184] |
+| A+CF − A | the effect of CF on A | −0.132 [−0.139, −0.125] | −0.158 [−0.167, −0.149] |
+| B+CF − B | the effect of CF on B | −0.186 [−0.193, −0.178] | −0.225 [−0.234, −0.215] |
+| C − B+CF | the effect of the consistency loss | +0.029 [+0.023, +0.036] | +0.032 [+0.024, +0.039] |
+
+Parameters (equal to A or B: CF adds no parameter) and latency on the L4, batch size 1, p50 ms (lower is better): A 9.53, A+CF 9.81, B 10.68, B+CF 10.92, C 10.78.
+
+- Result: the paired batches decrease the accuracy of A and of B. C is not better than A or B. Its CIs exclude 0 in the negative direction for both primary metrics. Thus Step 6 gives no reliable improvement over A. It gives a reliable decrease.
+- The consistency loss gives a small gain over B+CF (+0.029, CI excludes 0), but C is better than B+CF in only 2 of 3 seed pairs (0.541 / 0.419 / 0.552 against 0.508 / 0.563 / 0.353). The seed spread (B+CF std 0.109) is larger than the gain, so this is weak evidence. Paraphrase consistency: C 0.569 against B+CF 0.507, but both are lower than B (0.734), because the consistency metric also depends on the accuracy.
+- Cause (probable): the paired runs learn more slowly. They leave chance later than A and B, and 8 of 9 paired runs have their best checkpoint at step 11000 or 12000 (A and B: 2 of 6 at step 12000), so the curves still rise at the end. A paired batch of 32 records holds about 11 units (3.0 records per unit on average), against 32 nearly independent records for A and B. The consistency term is small (the mean over 100 steps is at most 0.019, against a cross-entropy of 0.8 to 1.2), so the loss does not cause the slowdown: A+CF has no consistency loss and decreases too.
+- Limitation: 3 seeds, 1 trial, and a fixed consistency weight. The bootstrap CI covers the record sample only, not the seed variance. The result applies to this budget (12000 steps). A longer run, or a mix of paired and random batches, could give another result. These would need the same budget for all configurations.
+- For Step 7: D extends C. C is worse than B at this budget, so compare D also with B and with B + the D parts (no CF), if the credit permits (35.2 units left, about 14 for Step 7).
+
+**Notes from the run:**
+- Files: `crux/data/batching.py` (`UnitBatchSampler`, `pair_units`, `make_dataloader(..., paired=)`), `crux/train.py` (`consistency_loss`, `paraphrase_rows`, the `train.paired` and `train.consistency_weight` keys; an architecture entry can set train keys), `crux/aggregate.py` (`--ref` for contrasts with another reference, and the `paraphrase_consistency` column), `configs/step6.yaml`, `notebooks/step6_train.ipynb`. 7 new tests. 377 tests pass.
+- Smoke run (L4, 60 steps of C, a path with "+"): fp16 path, finite loss, `consistency` in `train.log`, and the download of a path with "+" work.
+- Sweep driver: `crux6-s0` was lost two times (12:02 and 12:36), each time when a setup exec on `crux6-s1` hung for 20 to 30 minutes. The driver is one thread, so it did not probe the other VM in that time. The setup and verify calls now stop after 300 s (commit `0c96a3a`), and the driver ran with `--tick 120 --stall 600`. The lost runs started again from step 0. Do not run a training smoke test on the Mac (MPS): it froze the Mac.
 
 ## Step 7: Architecture D: CRUX
 
