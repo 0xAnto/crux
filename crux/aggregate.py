@@ -26,16 +26,50 @@ LOWER_IS_BETTER = {"ece"}
 
 
 def load_runs(root):
-    """Return {arch: {trial: {seed_index: metrics}}}."""
+    """Return {arch: {trial: {seed_index: metrics}}}. A run of Steps 5 and 6 has no order invariance or memory in
+    metrics.json: they come from order_invariance.json (`python -m crux.train --eval-only`) if the file exists."""
     runs = defaultdict(lambda: defaultdict(dict))
     for f in sorted(Path(root).glob("*/t*/s*/metrics.json")):
         seed_dir, trial_dir, arch_dir = f.parent, f.parent.parent, f.parent.parent.parent
-        runs[arch_dir.name][int(trial_dir.name[1:])][int(seed_dir.name[1:])] = json.loads(f.read_text())
+        m = json.loads(f.read_text())
+        if (f.parent / "order_invariance.json").exists() and "order_invariance" not in m:
+            extra = json.loads((f.parent / "order_invariance.json").read_text())
+            m.update({k: extra[k] for k in ("order_invariance", "memory")})
+        runs[arch_dir.name][int(trial_dir.name[1:])][int(seed_dir.name[1:])] = m
     return runs
 
 
 def mean_std(values):
     return float(np.mean(values)), float(np.std(values, ddof=1)) if len(values) > 1 else float("nan")
+
+
+def dig(m, *keys):
+    """m[k1][k2]... or None if a key is missing (an old run) or the value is null."""
+    for k in keys:
+        m = m.get(k) if isinstance(m, dict) else None
+    return m
+
+
+def mean_or_none(ms, *keys):
+    """Mean over the runs of the value at `keys`, or None if a run has no value."""
+    values = [dig(m, *keys) for m in ms]
+    return None if any(v is None for v in values) else float(np.mean(values))
+
+
+# Step 7 columns: (title, direction, keys in metrics.json, divisor). The divisor turns bytes into MB or KB.
+COST_COLUMNS = (
+    ("order invariance: argmax agreement", "higher", ("order_invariance", "argmax_agreement"), 1),
+    ("order invariance: mean abs prob diff", "lower", ("order_invariance", "mean_abs_prob_diff"), 1),
+    ("unseen_rule_accuracy, shuffled options", "higher", ("order_invariance", "shuffled", "unseen_rule_accuracy"), 1),
+    ("model MB fp16", "lower", ("memory", "model_bytes", "fp16"), 1e6),
+    ("peak CUDA MB above model, bs1", "lower", ("memory", "cuda_peak_extra_bytes", "batch_size_1"), 1e6),
+    ("peak CUDA MB above model, batches", "lower", ("memory", "cuda_peak_extra_bytes", "eval_batches"), 1e6),
+    ("cache KB per state", "lower", ("memory", "cache_bytes_fp16", "state_mean"), 1e3),
+    ("cache KB per instruction", "lower", ("memory", "cache_bytes_fp16", "instruction_mean"), 1e3),
+    ("bs1 p50 ms, state cached", "lower", ("latency", "cache_hit", "state", "batch_size_1", "p50_ms_per_record"), 1),
+    ("bs1 p50 ms, state and instruction cached", "lower",
+     ("latency", "cache_hit", "state_and_instruction", "batch_size_1", "p50_ms_per_record"), 1),
+)
 
 
 def bootstrap_ci(hits_x, hits_a, resamples, seed, level, chunk=250):
@@ -97,6 +131,7 @@ def aggregate(root, metric="unseen_rule_accuracy", ref="A"):
         row["params"] = {k: ms[0][k] for k in ("params_total", "params_trainable", "params_extra", "static_target")}
         row["latency"] = {f"{k}/{p}": mean_std([m["latency"][k][p] for m in ms])[0] for k in ("batch_size_1", "eval_batches")
                           for p in ("p50_ms_per_record", "p95_ms_per_record")}
+        row["cost"] = {title: mean_or_none(ms, *keys) for title, _, keys, _ in COST_COLUMNS}
         rows[arch] = row
     out["architectures"] = rows
     print("\nValidation, mean +- std over seeds (the direction is in each column)")
@@ -114,6 +149,13 @@ def aggregate(root, metric="unseen_rule_accuracy", ref="A"):
         p, lat = r["params"], r["latency"]
         print(f"| {arch} | {p['params_total']} | {p['params_trainable']} | {p['params_extra']} | {p['static_target']} | "
               + " | ".join(f"{v:.2f}" for v in lat.values()) + " |")
+    print("\nOrder invariance (validation, shuffled options), memory, and cache-hit latency per record, mean over seeds "
+          "(n/a: the run has no value)")
+    print("| arch | " + " | ".join(f"{t} ({d} is better)" for t, d, _, _ in COST_COLUMNS) + " |")
+    print("|---|" + "---|" * len(COST_COLUMNS))
+    for arch, r in rows.items():
+        cells = [("n/a" if r["cost"][t] is None else f"{r['cost'][t] / k:.4g}") for t, _, _, k in COST_COLUMNS]
+        print(f"| {arch} | " + " | ".join(cells) + " |")
     if "B" in rows and "A-param" in rows:
         gap = rows["A-param"]["params"]["params_trainable"] - rows["B"]["params"]["params_trainable"]
         print(f"\nA-param minus B trainable parameters: {gap}")

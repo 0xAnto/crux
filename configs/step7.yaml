@@ -1,0 +1,64 @@
+# Step 7: Architecture D (CRUX) and its ablations C+cache, C+equivariant, and the control D-CF.
+# Run one job: python -m crux.train --config configs/step7.yaml --arch D --trial 0 --seed-index 0
+# The plan: D, C+cache, and C+equivariant x 1 trial x 3 seeds = 9 runs, with the budget and the trial of the Step 5 rerun.
+# D-CF (3 more runs) is an extra control: B + the two D parts, no paired batches, no consistency loss. It is the last
+# architecture, so the sweep can stop before it if the credit does not permit.
+# A, B, and C come from earlier runs. Before crux.aggregate, link them (as for Step 6):
+#   cd runs/step7 && ln -s ../step5/A A && ln -s ../step5/B B && ln -s ../step6/C C
+# D = C + the split encoding (joint_layers) + the set-attention block over the options (option_attention).
+# joint_layers J: the top J encoder layers read [state ; instruction ; option]. The bottom L-J layers encode the state,
+# the instruction, and each option alone. These bottom states are cacheable. Ettin-17M has 7 layers with global attention
+# in the layers 0, 3, and 6, so J = 4 keeps the layers 3 to 6 joint (2 global layers). J = 0 is the joint encoding.
+# option_attention: one set-attention block over the pooled vectors of the options of a record (permutation-equivariant).
+# The input mode follows from the model: separate sequences when joint_layers > 0, else joint (crux.train.input_mode).
+# The steps come from budget.training_steps in configs/protocol.yaml. Do not set train.steps (smoke runs only).
+
+data_config: configs/step2_data.yaml   # tokenizer, max_length, train_batch_size (32), evaluation token budget
+out_root: runs/step7
+
+model:
+  id: jhu-clsp/ettin-encoder-17m
+  attn_implementation: sdpa
+  arch: A              # A, B, or A-param (set by --arch)
+  rank: 8              # rank of the generated factors (B)
+  hyper_layers: 0      # K: B generates adapters for the top K encoder layers (0 = the head only)
+  hyper_hidden: 64     # hidden size of the hypernetwork
+  joint_layers: 0      # J: 0 = joint encoding. J > 0 = split encoding with J joint top layers (Step 7)
+  option_attention: false   # Step 7: set-attention block over the options of a record
+
+train:
+  lr: 3.0e-5           # the encoder. Set by the trial. Not 1e-4 (Step 1: near chance)
+  new_lr_mult: 1       # new modules (head, hypernetwork, LoRA) train at lr x this value. Equal for all architectures. Not 10 (steps.md, Step 5)
+  weight_decay: 0.01   # set by the trial
+  warmup_ratio: 0.06   # as in Step 1 and ModernBERT
+  max_grad_norm: 1.0
+  fp16: true           # autocast and GradScaler on CUDA only
+  eval_every: 1000     # full validation split. Selection of the checkpoint on validation only
+  log_every: 100
+  num_workers: 0       # the items are tokenized before training; a worker needs a picklable dataset (spawn, forkserver)
+  selection_metric: unseen_rule_accuracy   # the first primary metric of the protocol
+  steps: null          # smoke runs only
+  seed_index: 0
+  paired: false        # Step 6: unit-paired batches (set by the architecture)
+  consistency_weight: 0.0   # Step 6: weight of the paraphrase consistency loss (set by the architecture)
+
+data:
+  max_train: null      # smoke runs only: keep the first N records
+  max_eval: null       # smoke runs only
+
+latency:               # on the run device, forward only, fp16 on CUDA
+  warmup: 10
+  n_batch1: 200
+  n_batches: 50
+
+architectures:
+  # D: C + the split encoding (J = 4) + the set-attention block. Paired batches and the consistency loss (weight 1.0) as in C.
+  D: {arch: B, hyper_layers: 0, joint_layers: 4, option_attention: true, train: {paired: true, consistency_weight: 1.0}}
+  C+cache: {arch: B, hyper_layers: 0, joint_layers: 4, train: {paired: true, consistency_weight: 1.0}}   # C + the split encoding only
+  C+equivariant: {arch: B, hyper_layers: 0, option_attention: true, train: {paired: true, consistency_weight: 1.0}}   # C + the block only (joint mode)
+  # Control: C is worse than B at this budget (steps.md, Step 6), so D-CF shows the two D parts on top of B.
+  D-CF: {arch: B, hyper_layers: 0, joint_layers: 4, option_attention: true}
+
+search:                # the same trial for every architecture
+  trials:
+    - {lr: 3.0e-5, weight_decay: 0.01}

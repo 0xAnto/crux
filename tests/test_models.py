@@ -9,7 +9,8 @@ from transformers import ModernBertConfig, ModernBertModel
 
 from crux.aggregate import bootstrap_ci
 from crux.models import Hypernet, Lora, Scorer, build_model, count_params, span_mean, static_ranks
-from crux.train import consistency_loss, load_config, paraphrase_rows, train
+from crux.data.batching import EncodedDataset, collate
+from crux.train import consistency_loss, input_mode, load_config, paraphrase_rows, train
 
 CLS, SEP, PAD = 1, 2, 0
 
@@ -175,7 +176,7 @@ class WordTokenizer:
 
 
 TCFG = {"data_cfg": {"max_length": 40, "max_option_length": 4, "train_batch_size": 4, "max_tokens": 2000,
-                     "max_batch_size": 8},
+                     "max_batch_size": 8, "max_state_length": 12, "max_instruction_length": 12},
         "train": {"lr": 1e-3, "new_lr_mult": 3, "weight_decay": 0.01, "warmup_ratio": 0.25, "max_grad_norm": 1.0,
                   "fp16": False, "eval_every": 2, "log_every": 1, "num_workers": 0, "selection_metric": "accuracy"},
         "latency": {"warmup": 1, "n_batch1": 3, "n_batches": 2}, "model": {"arch": "B", "hyper_layers": 1}}
@@ -373,3 +374,166 @@ def test_train_with_paired_batches_adds_the_consistency_loss_only_for_a_positive
     assert all("consistency" not in j for j in runs[0.0][0])
     assert all(math.isfinite(j["consistency"]) and j["consistency"] > 0 for j in runs[1.0][0])
     assert not np.allclose(runs[0.0][1], runs[1.0][1], atol=1e-6)  # the consistency loss changes the weights
+
+
+# Step 7: the split encoding (joint_layers) and the set-attention block (option_attention).
+
+def randomize_block(model, std=0.3):
+    """Give the set-attention block non-zero weights (it starts as the identity), so that the tests are not vacuous."""
+    torch.manual_seed(2)
+    for p in model.option_attn.parameters():
+        p.data.normal_(std=std)
+
+
+SHARED_TOKENIZER = WordTokenizer()  # one vocabulary: the same word has the same id in every batch of a test
+
+
+def real_batch(records, mode):
+    """One batch of the records in the given mode, from the real tokenization and collation code."""
+    ds = EncodedDataset(records, SHARED_TOKENIZER, TCFG["data_cfg"], mode, True)
+    return collate([ds[i] for i in range(len(ds))], mode, ds.pad_id, True)  # in the order of the records
+
+
+def d_model(J, attn=True, arch="B", layers=4):
+    m = Scorer(tiny_encoder(layers), arch, joint_layers=J, option_attention=attn).eval()
+    if arch == "B":
+        randomize_hyper(m)
+    if attn:
+        randomize_block(m)
+    return m
+
+
+def test_cache_gives_the_same_logits_as_encoding_the_state_and_the_instruction_again():
+    m = d_model(2)
+    x = real_batch(tiny_records(8), "separate")
+    with torch.no_grad():
+        ref = m(**x)
+        states = m.encode_bottom(x["state_ids"], x["state_mask"])
+        instructions = m.encode_bottom(x["instruction_ids"], x["instruction_mask"])
+        for kw in ({"state_cache": states}, {"instruction_cache": instructions},
+                   {"state_cache": states, "instruction_cache": instructions}):
+            assert torch.allclose(m(**{**x, **kw}), ref, atol=1e-5)
+        # The cache replaces the ids: wrong ids with the cache give the same logits.
+        wrong = {**x, "state_ids": x["state_ids"].flip(0), "instruction_ids": x["instruction_ids"].flip(0)}
+        assert torch.allclose(m(**wrong, state_cache=states, instruction_cache=instructions), ref, atol=1e-5)
+        assert not torch.allclose(m(**wrong), ref, atol=1e-4)
+
+
+@pytest.mark.parametrize("J", [0, 2])
+def test_permuting_the_options_permutes_the_logits(J):
+    m = d_model(J)
+    mode = "separate" if J else "joint"
+    rec = [tiny_records(8)[i] for i in (4, 2)]  # 3 and 4 options
+    perms = [[2, 0, 1], [3, 1, 0, 2]]
+    shuffled = [{**r, "options": [r["options"][p] for p in perm], "target": perm.index(r["target"])}
+                for r, perm in zip(rec, perms)]
+    with torch.no_grad():
+        a, b = m(**real_batch(rec, mode)), m(**real_batch(shuffled, mode))
+        assert torch.isfinite(a[0, :3]).all() and torch.isfinite(a[1, :4]).all()
+        for i, perm in enumerate(perms):
+            assert torch.allclose(b[i, :len(perm)], a[i, perm], atol=1e-5)
+        plain = d_model(J, attn=False)
+        plain.load_state_dict({k: v for k, v in m.state_dict().items() if "option_attn" not in k})
+        assert not torch.allclose(plain(**real_batch(rec, mode))[0, :3], a[0, :3], atol=1e-4)  # the block does something
+
+
+@pytest.mark.parametrize("J", [0, 2])
+def test_a_padded_option_does_not_change_the_scores_of_the_real_options(J):
+    m, mode = d_model(J), "separate" if J else "joint"
+    recs = tiny_records(8)[:3]  # 2, 3, and 4 options
+    with torch.no_grad():
+        both = m(**real_batch(recs[:2], mode))  # record 0 has a padded option
+        alone = m(**real_batch(recs[:1], mode))
+        assert both[0, 2:].eq(-torch.inf).all()
+        assert torch.allclose(both[0, :2], alone[0, :2], atol=1e-5)
+
+
+@pytest.mark.parametrize("J,arch", [(0, "A"), (0, "B"), (2, "A"), (2, "B")])
+def test_the_set_attention_block_is_the_identity_at_the_start(J, arch):
+    base = Scorer(tiny_encoder(4), arch, joint_layers=J).eval()
+    new = Scorer(copy.deepcopy(base.encoder), arch, joint_layers=J, option_attention=True).eval()
+    missing = new.load_state_dict(base.state_dict(), strict=False)
+    assert all(k.startswith("option_attn.") for k in missing.missing_keys) and not missing.unexpected_keys
+    x = real_batch(tiny_records(8), "separate" if J else "joint")
+    with torch.no_grad():
+        assert torch.allclose(base(**x), new(**x), atol=1e-6)
+    added = count_params(new)["params_total"] - count_params(base)["params_total"]
+    assert count_params(new)["params_extra"] - count_params(base)["params_extra"] == added > 0
+
+
+def test_split_encoding_does_not_depend_on_the_padding_of_the_segments():
+    m = d_model(2)
+    recs = tiny_records(8)[:2]
+    with torch.no_grad():
+        ref = m(**real_batch(recs, "separate"))
+        x = real_batch(recs, "separate")
+        for k in ("state_ids", "state_mask", "instruction_ids", "instruction_mask"):
+            x[k] = torch.nn.functional.pad(x[k], (0, 7))  # more [PAD] columns in the state and the instruction
+        x["option_ids"], x["option_attention_mask"] = (torch.nn.functional.pad(x[k], (0, 3)) for k in ("option_ids", "option_attention_mask"))
+        assert torch.allclose(m(**x)[x["option_mask"]], ref[x["option_mask"]], atol=1e-5)
+
+
+def test_the_split_encoding_rejects_hyper_layers_and_a_wrong_number_of_joint_layers():
+    for kw in ({"hyper_layers": 1}, {"joint_layers": 5}):
+        with pytest.raises(ValueError):
+            Scorer(tiny_encoder(4), "B", **{"joint_layers": 2, **kw})
+
+
+def test_old_architectures_keep_the_parameters_and_the_random_numbers_of_commit_b7220bf():
+    ref_cls, states = reference_models().Scorer, []
+    for cls in (ref_cls, Scorer):
+        for arch, K in (("A", 0), ("B", 0), ("A-param", 2)):
+            enc = tiny_encoder()
+            torch.manual_seed(5)
+            m = cls(enc, arch, hyper_layers=K)
+            states.append((m.state_dict(), torch.get_rng_state()))
+    for (sd_r, rng_r), (sd_n, rng_n) in zip(states[:3], states[3:]):
+        assert sd_r.keys() == sd_n.keys() and all(torch.equal(sd_r[k], sd_n[k]) for k in sd_r)
+        assert torch.equal(rng_r, rng_n)  # the new modules are not created, so no random number is drawn
+
+
+def test_the_input_mode_follows_from_the_model_config():
+    assert input_mode({"arch": "B"}) == "joint" and input_mode({"joint_layers": 0, "option_attention": True}) == "joint"
+    assert input_mode({"joint_layers": 4}) == "separate"
+    for arch, mode, J, attn in (("D", "separate", 4, True), ("C+cache", "separate", 4, False),
+                                ("C+equivariant", "joint", 0, True), ("D-CF", "separate", 4, True)):
+        c = load_config("configs/step7.yaml", arch, 0)
+        assert input_mode(c["model"]) == mode and c["model"].get("joint_layers", 0) == J
+        assert c["model"].get("option_attention", False) is attn and "train" not in c["model"]
+        assert c["train"]["paired"] is (arch != "D-CF") and c["train"]["lr"] == 3.0e-5 and c["out_root"] == "runs/step7"
+
+
+def test_separate_training_with_paired_batches_writes_order_invariance_memory_and_cache_hit_latency(tmp_path):
+    cfg = {**TCFG, "model": {"arch": "B", "hyper_layers": 0, "joint_layers": 2, "option_attention": True},
+           "train": {**TCFG["train"], "paired": True, "consistency_weight": 1.0}}
+    data = {"train": paired_records(3), "validation": tiny_records(6, 100), "dev_id": tiny_records(4, 200)}
+    model = Scorer(tiny_encoder(4), "B", joint_layers=2, option_attention=True)
+    out = train(cfg, data, WordTokenizer(), model, tmp_path, torch.device("cpu"), 4, 13)
+    log = [j for j in map(json.loads, (tmp_path / "train.log").read_text().splitlines()) if "loss" in j]
+    assert all(math.isfinite(j["loss"]) and j["consistency"] > 0 for j in log)
+    assert out["joint_layers"] == 2 and out["option_attention"] is True and out["params_extra"] > 0
+    oi = out["order_invariance"]
+    assert set(oi) == {"seed", "n_records", "n_moved", "argmax_agreement", "mean_abs_prob_diff", "max_abs_prob_diff",
+                       "shuffled"} and "accuracy" in oi["shuffled"]  # the tiny records have no ids for unseen_rule_accuracy
+    assert oi["n_records"] == 6 and oi["argmax_agreement"] == 1.0 and oi["max_abs_prob_diff"] < 1e-4  # equivariant model
+    mem = out["memory"]
+    assert mem["model_bytes"] == {"fp32": 4 * out["params_total"], "fp16": 2 * out["params_total"]}
+    assert mem["cuda_peak_extra_bytes"] == {"batch_size_1": None, "eval_batches": None}  # CPU
+    assert mem["cache_bytes_fp16"]["n_states"] == 5 and mem["cache_bytes_fp16"]["state_mean"] > 0
+    hit = out["latency"]["cache_hit"]
+    assert set(hit) == {"state", "state_and_instruction"} and hit["state"]["batch_size_1"]["p50_ms_per_record"] > 0
+    assert {"batch_size_1", "eval_batches"} <= set(out["latency"])  # the keys of crux.aggregate stay
+
+
+def test_shuffle_options_is_fixed_and_keeps_the_target_on_the_same_option():
+    from crux.train import shuffle_options
+    recs = tiny_records(30) + [{**tiny_records(1)[0], "id": "sc", "task_type": "scoring", "target": [0.1, 0.9]}]
+    a, pa = shuffle_options(recs, 7)
+    b, pb = shuffle_options(recs, 7)
+    assert pa == pb and a == b and any(p != sorted(p) for p in pa)
+    for r, s, perm in zip(recs, a, pa):
+        assert sorted(s["options"]) == sorted(r["options"]) and s["options"] == [r["options"][p] for p in perm]
+        if r["task_type"] == "scoring":
+            assert s["target"] == [r["target"][p] for p in perm]
+        else:
+            assert s["options"][s["target"]] == r["options"][r["target"]]

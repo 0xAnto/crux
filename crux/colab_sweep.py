@@ -27,7 +27,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "https://github.com/0xAnto/crux.git"
 SPLITS = ("train", "dev_id", "validation")  # never test (protocol: Step 8 only)
-FILES = ("train.log", "val_probs.npz", "best.pt", "metrics.json")  # metrics.json last: it marks a complete run
+FILES = ("resolved_config.yaml", "train.log", "val_probs.npz", "best.pt", "metrics.json")  # metrics.json last: it marks a complete run
 VM_RUNS = "/content/runs/step5"
 
 

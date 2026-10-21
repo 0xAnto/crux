@@ -1,10 +1,14 @@
-"""Steps 5 and 6: train and evaluate one model (A, B, B-ablation, A-param; C, A+CF, B+CF) with one trial and one seed.
+"""Steps 5 to 7: train and evaluate one model (A, B, B-ablation, A-param; C, A+CF, B+CF; D and its ablations) with one
+trial and one seed.
 
 Run: python -m crux.train --config configs/step5.yaml --arch B --trial 0 --seed-index 0
 The run trains exactly `budget.training_steps` steps (configs/protocol.yaml), evaluates on validation every
 `eval_every` steps, and keeps the best checkpoint on validation. The run resumes from `last.pt`.
 It writes to <out_root>/<arch>/t<trial>/s<seed_index>/ : resolved_config.yaml, train.log (JSON lines),
 best.pt, metrics.json, val_probs.npz. It reads only the train, dev_id, and validation splits.
+Step 7: the input mode follows from the model (`input_mode`). metrics.json also holds `order_invariance`, `memory`, and
+for the cache variants `latency.cache_hit`. Check a finished run folder (Steps 5 to 7) without training, on the CPU:
+python -m crux.train --eval-only <run_dir>   (it writes <run_dir>/order_invariance.json)
 """
 import argparse
 import json
@@ -68,11 +72,24 @@ def sync(device):
         torch.mps.synchronize()
 
 
+def input_mode(model_cfg):
+    """The split encoding (joint_layers > 0) reads separate sequences. All other models read joint sequences."""
+    return "separate" if model_cfg.get("joint_layers", 0) else "joint"
+
+
 @torch.no_grad()
-def time_batches(model, batches, device, fp16, warmup):
-    """Milliseconds per record of each batch (forward only, data already on the device, after warmup)."""
+def time_batches(model, batches, device, fp16, warmup, cached=()):
+    """Milliseconds per record of each batch (forward only, data already on the device, after warmup).
+
+    cached: names ("state", "instruction") whose bottom-layer states are computed before the timer starts (a cache hit)."""
     model.eval()
-    batches = [(to_device(b, device), len(b["ids"])) for b in batches]
+    prepared = []
+    for batch in batches:
+        b = to_device(batch, device)
+        with autocast(device, fp16):
+            b.update({f"{n}_cache": model.encode_bottom(b[f"{n}_ids"], b[f"{n}_mask"]) for n in cached})
+        prepared.append((b, len(batch["ids"])))
+    batches = prepared
     ms, warmup = [], min(warmup, len(batches) - 1)  # at least one timed batch
     for i, (b, n) in enumerate(batches):
         for _ in range(2 if i < warmup else 1):  # the first batches run twice and are not timed
@@ -87,16 +104,93 @@ def time_batches(model, batches, device, fp16, warmup):
             "n_batches": len(ms)}
 
 
-def latency(model, tokenizer, records, dcfg, lcfg, device, fp16):
-    """Latency at batch size 1 and with the evaluation batches (token budget sampler)."""
-    one = make_dataloader(records[:lcfg["n_batch1"] + lcfg["warmup"]], tokenizer, {**dcfg, "max_batch_size": 1},
-                          "joint", True)
-    loader = make_dataloader(records, tokenizer, dcfg, "joint", True)
-    sampler = loader.batch_sampler.batches  # spread the timed batches over the lengths
+@torch.no_grad()
+def cuda_peak(model, batches, device, fp16):
+    """Peak CUDA memory in bytes above the memory in use before the forward passes, or None off CUDA."""
+    if device.type != "cuda":
+        return None
+    model.eval()
+    batches = [to_device(b, device) for b in batches]
+    torch.cuda.synchronize(device), torch.cuda.reset_peak_memory_stats(device)
+    base = torch.cuda.memory_allocated(device)
+    for b in batches:
+        with autocast(device, fp16):
+            model(**b)
+    torch.cuda.synchronize(device)
+    return torch.cuda.max_memory_allocated(device) - base
+
+
+def cost_batches(loader, tokenizer, records, dcfg, lcfg, mode):
+    """The batches for the cost measurements: batch size 1, and evaluation batches spread over the lengths."""
+    one = make_dataloader(records[:lcfg["n_batch1"] + lcfg["warmup"]], tokenizer, {**dcfg, "max_batch_size": 1}, mode, True)
+    sampler = loader.batch_sampler.batches
     pick = sampler[::max(1, len(sampler) // (lcfg["n_batches"] + lcfg["warmup"]))][:lcfg["n_batches"] + lcfg["warmup"]]
-    batches = [loader.collate_fn([loader.dataset[i] for i in b]) for b in pick]
-    return {"device": str(device), "batch_size_1": time_batches(model, list(one), device, fp16, lcfg["warmup"]),
-            "eval_batches": time_batches(model, batches, device, fp16, lcfg["warmup"])}
+    return list(one), [loader.collate_fn([loader.dataset[i] for i in b]) for b in pick]
+
+
+def latency(model, one, batches, device, fp16, warmup):
+    """Latency at batch size 1 and with the evaluation batches (token budget sampler). A cache variant also gives
+    `cache_hit`: the bottom-layer states of the state (and of the instruction) are ready before the timer starts."""
+    out = {"device": str(device), "batch_size_1": time_batches(model, one, device, fp16, warmup),
+           "eval_batches": time_batches(model, batches, device, fp16, warmup)}
+    if model.J:
+        out["cache_hit"] = {name: {"batch_size_1": time_batches(model, one, device, fp16, warmup, names),
+                                   "eval_batches": time_batches(model, batches, device, fp16, warmup, names)}
+                            for name, names in (("state", ("state",)), ("state_and_instruction", ("state", "instruction")))}
+    return out
+
+
+def memory(model, dataset, one=None, batches=None, device=None, fp16=False):
+    """Memory of the model. model_bytes: the parameters in fp32 and fp16. cuda_peak_extra_bytes: the peak CUDA memory
+    of a forward pass above the memory in use before it (null off CUDA, or without batches). cache_bytes_fp16
+    (split encoding only): the mean bottom-layer states of a distinct state and of a distinct instruction of
+    `dataset` (real tokens x hidden size x 2 bytes)."""
+    n = sum(p.numel() for p in model.parameters())
+    out = {"model_bytes": {"fp32": 4 * n, "fp16": 2 * n}, "cuda_peak_extra_bytes": {
+        "batch_size_1": cuda_peak(model, one, device, fp16) if one else None,
+        "eval_batches": cuda_peak(model, batches, device, fp16) if batches else None}, "cache_bytes_fp16": None}
+    if model.J:
+        d = model.encoder.config.hidden_size
+        sizes = {k: {tuple(it[f"{k}_ids"]): len(it[f"{k}_ids"]) * d * 2 for it in dataset.items}
+                 for k in ("state", "instruction")}
+        out["cache_bytes_fp16"] = {f"{k}_mean": float(np.mean(list(v.values()))) for k, v in sizes.items()}
+        out["cache_bytes_fp16"].update({f"n_{k}s": len(v) for k, v in sizes.items()})
+    return out
+
+
+def shuffle_options(records, seed):
+    """Copies of the records with the options of each record in a fixed random order (the target follows).
+    Return (records, perms): perms[i][j] is the canonical index of the option at position j of record i."""
+    rng, out, perms = random.Random(seed), [], []
+    for r in records:
+        perm = list(range(len(r["options"])))
+        rng.shuffle(perm)
+        target = [r["target"][p] for p in perm] if r["task_type"] == "scoring" else perm.index(r["target"])
+        out.append({**r, "options": [r["options"][p] for p in perm], "target": target})
+        perms.append(perm)
+    return out, perms
+
+
+def order_invariance(model, tokenizer, records, probs, train, dcfg, mode, device, fp16, seed):
+    """Option-order invariance on `records`: shuffle the options of each record (fixed seed), predict, and map the
+    probabilities back to the canonical order. `probs` are the predictions in the canonical order.
+    argmax_agreement: share of records with the same predicted option (higher is better). mean_abs_prob_diff and
+    max_abs_prob_diff: the absolute difference of the probabilities, over all (record, option) pairs (lower is
+    better). shuffled: accuracy and unseen_rule_accuracy with the shuffled order."""
+    shuffled, perms = shuffle_options(records, seed)
+    loader = make_dataloader(shuffled, tokenizer, dcfg, mode, True)
+    by_id = predict(model, loader, device, fp16)
+    back = []
+    for r, perm in zip(records, perms):
+        p = np.empty(len(perm))
+        p[perm] = by_id[r["id"]]  # position j holds the canonical option perm[j]
+        back.append(p)
+    diff = np.concatenate([np.abs(p - q) for p, q in zip(probs, back)])
+    m = evaluate(shuffled, [by_id[r["id"]] for r in records], train=train)
+    return {"seed": seed, "n_records": len(records), "n_moved": sum(p != sorted(p) for p in perms),
+            "argmax_agreement": float(np.mean([p.argmax() == q.argmax() for p, q in zip(probs, back)])),
+            "mean_abs_prob_diff": float(diff.mean()), "max_abs_prob_diff": float(diff.max()),
+            "shuffled": {k: m[k] for k in ("accuracy", "unseen_rule_accuracy") if k in m}}
 
 
 def make_optimizer(model, t):
@@ -137,16 +231,17 @@ def paraphrase_rows(ids, group_of):
 def train(cfg, data, tokenizer, model, out, device, steps, seed):
     """Train `model` for `steps` steps and write the results to `out`. `data` holds the record lists
     "train", "validation", and "dev_id". Return the content of metrics.json.
-    Step 6: train.paired gives unit-paired batches, and train.consistency_weight > 0 adds the consistency loss."""
-    t, dcfg = cfg["train"], cfg["data_cfg"]
+    Step 6: train.paired gives unit-paired batches, and train.consistency_weight > 0 adds the consistency loss.
+    Step 7: the model config sets the input mode (`input_mode`), and metrics.json holds the order invariance and the memory."""
+    t, dcfg, mode = cfg["train"], cfg["data_cfg"], input_mode(cfg["model"])
     fp16 = bool(t["fp16"]) and device.type == "cuda"
     out.mkdir(parents=True, exist_ok=True)
     random.seed(seed), np.random.seed(seed), torch.manual_seed(seed)
-    loader = make_dataloader(data["train"], tokenizer, dcfg, "joint", True, train=True, seed=seed,
+    loader = make_dataloader(data["train"], tokenizer, dcfg, mode, True, train=True, seed=seed,
                              paired=t.get("paired", False))
     lam = t.get("consistency_weight", 0.0)
     group_of = {r["id"]: r["meta"].get("paraphrase_group") for r in data["train"]} if lam else {}
-    val_loader = make_dataloader(data["validation"], tokenizer, dcfg, "joint", True)
+    val_loader = make_dataloader(data["validation"], tokenizer, dcfg, mode, True)
     model.to(device)
     opt = make_optimizer(model, t)
     warm = int(t["warmup_ratio"] * steps)
@@ -208,18 +303,23 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
     # The best checkpoint on validation gives all final numbers.
     model.load_state_dict(torch.load(out / "best.pt", map_location=device)["model"])
     val, probs = evaluate_split(model, val_loader, data["validation"], data["train"], device, fp16)
-    dev_loader = make_dataloader(data["dev_id"], tokenizer, dcfg, "joint", True)
+    dev_loader = make_dataloader(data["dev_id"], tokenizer, dcfg, mode, True)
     dev, _ = evaluate_split(model, dev_loader, data["dev_id"], data["train"], device, fp16)
     gold = [r["target"] for r in data["validation"]]
     hits = np.array([int(p.argmax()) == g for p, g in zip(probs, gold)])
     np.savez_compressed(out / "val_probs.npz", ids=np.array([r["id"] for r in data["validation"]]), hits=hits,
                         probs=np.concatenate(probs).astype(np.float32), lens=np.array([len(p) for p in probs]))
-    metrics = {"arch": cfg["model"]["arch"], "hyper_layers": cfg["model"].get("hyper_layers", 0), "seed": seed,
+    one, many = cost_batches(val_loader, tokenizer, data["validation"], dcfg, cfg["latency"], mode)
+    metrics = {"arch": cfg["model"]["arch"], "hyper_layers": cfg["model"].get("hyper_layers", 0),
+               "joint_layers": model.J, "option_attention": model.option_attn is not None, "seed": seed,
                "steps": steps, "fp16": fp16, "paired": t.get("paired", False), "consistency_weight": lam,
                "best_step": best["step"], "train_seconds": time.time() - t0,
                "n_train": len(data["train"]), "validation": val, "dev_id": dev, **count_params(model),
                "static_target": getattr(model, "static_target", None),
-               "latency": latency(model, tokenizer, data["validation"], dcfg, cfg["latency"], device, fp16)}
+               "latency": latency(model, one, many, device, fp16, cfg["latency"]["warmup"]),
+               "memory": memory(model, val_loader.dataset, one, many, device, fp16),
+               "order_invariance": order_invariance(model, tokenizer, data["validation"], probs, data["train"], dcfg, mode,
+                                                    device, fp16, seed)}
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1, default=float))
     (out / "last.pt").unlink()
     return metrics
@@ -236,20 +336,63 @@ def load_config(path, arch=None, trial=None, overrides=()):
     return apply_overrides(cfg, overrides)
 
 
+def load_data(cap, names):
+    """The splits `names` as {name: records}. cap maps the keys max_train and max_eval to a limit (smoke runs only)."""
+    from crux.splits import load_split
+    return {k: load_split(k)[:cap[{"train": "max_train"}.get(k, "max_eval")]] for k in names}
+
+
+def eval_only(run, cpu, config=None):
+    """Check a finished run folder (Steps 5 to 7) without training: load best.pt with resolved_config.yaml, predict
+    the validation split, and write order_invariance.json (order invariance and memory) into the folder.
+    The runs of Steps 5 and 6 have no resolved_config.yaml: pass the config of their step, and the folder name
+    <arch>/t<trial>/s<seed_index> gives the rest.
+    The device is the CUDA GPU if there is one, else the CPU (never MPS). The prediction runs in fp16 on CUDA only."""
+    from transformers import AutoTokenizer
+    run = run.absolute()
+    if (run / "resolved_config.yaml").exists():
+        cfg = yaml.safe_load((run / "resolved_config.yaml").read_text())
+    elif config:
+        cfg = load_config(config, run.parents[1].name, int(run.parent.name[1:]))
+        cfg["seed"] = yaml.safe_load((ROOT / "configs" / "protocol.yaml").read_text())["seeds"][int(run.name[1:])]
+    else:
+        raise SystemExit(f"{run} has no resolved_config.yaml. Pass --config.")
+    device = torch.device("cuda" if torch.cuda.is_available() and not cpu else "cpu")
+    fp16 = bool(cfg["train"]["fp16"]) and device.type == "cuda"
+    dcfg, mode = yaml.safe_load((ROOT / cfg["data_config"]).read_text()), input_mode(cfg["model"])
+    data = load_data(cfg["data"], ("train", "validation"))
+    tokenizer = AutoTokenizer.from_pretrained(dcfg["tokenizer"])
+    model = build_model(cfg["model"])
+    model.load_state_dict(torch.load(run / "best.pt", map_location="cpu")["model"])
+    model.to(device)
+    loader = make_dataloader(data["validation"], tokenizer, dcfg, mode, True)
+    _, probs = evaluate_split(model, loader, data["validation"], data["train"], device, fp16)
+    one, many = cost_batches(loader, tokenizer, data["validation"], dcfg, cfg["latency"], mode)
+    out = {"run": str(run), "device": str(device), "fp16": fp16, "mode": mode,
+           "order_invariance": order_invariance(model, tokenizer, data["validation"], probs, data["train"], dcfg, mode,
+                                                device, fp16, cfg["seed"]),
+           "memory": memory(model, loader.dataset, one, many, device, fp16)}
+    (run / "order_invariance.json").write_text(json.dumps(out, indent=1, default=float))
+    print(json.dumps(out["order_invariance"]))
+
+
 def main():
     from transformers import AutoTokenizer
 
-    from crux.splits import load_split
-
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
+    ap.add_argument("--config", help="the config file (with --eval-only: only for a run folder without resolved_config.yaml)")
     ap.add_argument("--arch", help="a key of `architectures` in the config")
     ap.add_argument("--trial", type=int, help="an index of `search.trials` in the config")
     ap.add_argument("--seed-index", type=int, default=0, help="index in `seeds` of configs/protocol.yaml")
     ap.add_argument("--out", help="run folder (default: <out_root>/<arch>/t<trial>/s<seed_index>)")
     ap.add_argument("--set", nargs="*", default=[], metavar="a.b=value", help="override config values")
     ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--eval-only", metavar="RUN_DIR", help="no training: write order_invariance.json into a finished run folder")
     args = ap.parse_args()
+    if args.eval_only:
+        return eval_only(Path(args.eval_only), args.cpu, args.config)
+    if not args.config:
+        ap.error("--config is required")
 
     cfg = load_config(args.config, args.arch, args.trial, args.set)
     protocol = yaml.safe_load((ROOT / "configs" / "protocol.yaml").read_text())
@@ -263,9 +406,7 @@ def main():
     device = torch.device("cpu" if args.cpu else "cuda" if torch.cuda.is_available() else
                           "mps" if torch.backends.mps.is_available() else "cpu")
     cfg["data_cfg"] = yaml.safe_load((ROOT / cfg["data_config"]).read_text())
-    cap = cfg["data"]  # max_train and max_eval are for smoke runs only
-    data = {k: load_split(k)[:cap[c]] for k, c in (("train", "max_train"), ("validation", "max_eval"),
-                                                    ("dev_id", "max_eval"))}
+    data = load_data(cfg["data"], ("train", "validation", "dev_id"))
     tokenizer = AutoTokenizer.from_pretrained(cfg["data_cfg"]["tokenizer"])
     random.seed(seed), np.random.seed(seed), torch.manual_seed(seed)
     model = build_model(cfg["model"])
