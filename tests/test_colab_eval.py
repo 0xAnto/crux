@@ -1,5 +1,6 @@
 """crux.colab_eval against a fake colab CLI: 2 VMs share the runs, a lost VM gets them again, the baselines come once."""
-import re
+import ast
+import shlex
 from types import SimpleNamespace
 
 import yaml
@@ -16,9 +17,12 @@ class FakeColab:
     def colab(self, *args, stdin=None, timeout=0):
         cmd, vm = args[0], (args[2] if len(args) > 2 else None)
         if cmd == "new":
-            self.vms[vm] = {"have": set(), "done": [], "queue": [], "setup": False, "base": False, "baseline_job": False}
+            self.vms[vm] = {"have": set(), "dirs": set(), "done": [], "queue": [], "setup": False, "base": False,
+                            "baseline_job": False}
         elif cmd == "stop":
             self.vms.pop(vm, None)
+        elif cmd == "upload" and args[4].rsplit("/", 1)[0] not in self.vms[vm]["dirs"] | {"/content/crux/data/splits"}:
+            return False, "no parent folder"  # as the real CLI
         elif cmd == "upload" and args[4].endswith("best.pt"):
             self.vms[vm]["have"].add("/".join(args[4].split("/")[-4:-3] + args[4].split("/")[-2:-1]))
         elif cmd == "download":
@@ -33,10 +37,14 @@ class FakeColab:
             v["done"] += v["queue"]
             v["queue"], v["base"] = [], v["base"] or v["baseline_job"]
             return dict(done=v["done"], have=sorted(v["have"]), baselines=v["base"], busy=bool(v["queue"]), setup=v["setup"], last=[])
+        compile(code, "vm", "exec")  # the code must be valid Python
+        if "makedirs" in code:
+            v["dirs"] |= set(ast.literal_eval(code.split("for d in ")[1].split(":")[0]))
         if "gunzip" in code:
             v["setup"] = True
         if "crux.benchmark" in code:
-            v["queue"] = re.findall(r"'([^']+)'", code.split("--runs ")[1].split(" >> ")[0])
+            v["queue"] = shlex.split(ast.literal_eval(code.split("Popen(")[1].split(", shell")[0]).split("--runs ")[1].split(" >> ")[0])
+            v["queue"] = [r for r in v["queue"] if r != "--baselines"]
             v["baseline_job"] = "--baselines" in code
             self.starts.append((vm, list(v["queue"]), v["baseline_job"]))
         return True

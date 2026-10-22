@@ -13,6 +13,7 @@ The VMs use the pinned commit. The test split goes to the VMs, but only the fina
 import argparse
 import gzip
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -65,8 +66,14 @@ print('@@' + json.dumps(r.stdout))
 
 START = """
 import subprocess, json
-subprocess.Popen('cd /content/crux && nohup python -m crux.benchmark --final --out {out} --runs {runs} {extra} >> /content/bench.log 2>&1 &',
-                 shell=True, start_new_session=True)
+subprocess.Popen({cmd!r}, shell=True, start_new_session=True)
+print('@@' + json.dumps(True))
+"""
+
+MKDIR = """
+import json, os
+for d in {dirs}:
+    os.makedirs(d, exist_ok=True)
 print('@@' + json.dumps(True))
 """
 
@@ -184,13 +191,13 @@ class Driver:
             if not (p and p["setup"]) and not self.setup(vm, i == 0):
                 continue
             chunk = todo[:self.a.chunk]
-            for r in chunk:  # the checkpoints of the chunk
-                m, k = split_run(r)
-                if p is None or r not in p["have"]:
-                    d = f"/content/crux/{self.cfg['models'][m]['root']}/{m}/t0/s{k}"
-                    for f in ("resolved_config.yaml", "best.pt"):
-                        if (run_dir(self.cfg, m, k, f)).exists() and not self.upload(vm, run_dir(self.cfg, m, k, f), f"{d}/{f}"):
-                            break
+            new = [split_run(r) for r in chunk if p is None or r not in p["have"]]  # the checkpoints of the chunk
+            dirs = {(m, k): f"/content/crux/{self.cfg['models'][m]['root']}/{m}/t0/s{k}" for m, k in new}
+            if new and vm_python(vm, MKDIR.format(dirs=json.dumps(sorted(dirs.values())))) is None:
+                continue  # colab upload does not make the parent folder
+            if not all(self.upload(vm, run_dir(self.cfg, m, k, f), f"{d}/{f}") for (m, k), d in dirs.items()
+                       for f in ("resolved_config.yaml", "best.pt") if run_dir(self.cfg, m, k, f).exists()):
+                continue  # start no job with a missing checkpoint; the next tick tries again
             left, n = self.starts.get(vm, (None, 0))
             self.starts[vm] = (todo, n + 1 if left == todo else 1)
             if self.starts[vm][1] > self.a.max_starts:  # the job stops without progress: a bug or an OOM, not a lost VM
@@ -199,7 +206,9 @@ class Driver:
                 notify(f"HALT: {vm} started the same job {self.starts[vm][1] - 1} times without progress. See /content/bench.log.")
                 sys.exit(1)
             extra = "--baselines" if base and len(chunk) == len(todo) else ""  # the baselines come with the last chunk of VM 0
-            if vm_python(vm, START.format(out=VM_OUT, runs=" ".join(f"'{r}'" for r in chunk), extra=extra)) is not None:
+            cmd = (f"cd /content/crux && nohup python -m crux.benchmark --final --out {VM_OUT} "
+                   f"--runs {' '.join(map(shlex.quote, chunk))} {extra} >> /content/bench.log 2>&1 &")
+            if vm_python(vm, START.format(cmd=cmd)) is not None:
                 log(f"{vm}: started {chunk} {extra}")
         return all(self.complete(r) for part in self.parts for r in part) and not self.need_baselines()
 
