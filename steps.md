@@ -406,7 +406,7 @@ ECE on test synthetic, mean over 3 seeds (lower is better): A 0.075, A-param 0.1
 
 Latency on the L4 at batch size 1, p50 from the training runs (lower is better): A 9.53 ms, A+CF 9.81, B 10.68, C 10.78, B+CF 10.92, C+equivariant 11.12, B-abl 11.93, A-param 14.37, D 19.80, C+cache 19.98, D-CF 20.25 (D with the state and the instruction cached: 11.76, Step 7). Parameters (total = trainable): A and A+CF 16,863,745; B, B+CF, C, and C+cache 17,146,945; A-param 17,146,625; C+equivariant, D, and D-CF 17,410,625; B-abl 18,744,385.
 
-Test synthetic, counterfactual_paired_accuracy per edit type and orig label, mean over 3 seeds (higher is better). Only the cells with n ≥ 40 units are shown. `exception_remove` (69 units) and `priority_swap` (53 units) are too small to report per type:
+Test synthetic, counterfactual_paired_accuracy per edit type and orig label, mean over 3 seeds (higher is better). n counts the pairs. Only the cells with n ≥ 40 pairs are shown. `exception_remove` (69 pairs) and `priority_swap` (53 pairs) are too small to report per type:
 
 | Edit type / orig | n | A | B | C | C+equivariant | D | D-CF |
 |---|---|---|---|---|---|---|---|

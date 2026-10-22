@@ -21,10 +21,12 @@ def test_build_release(tmp_path):
         path = root / "data" / "splits" / ("benchmarks" if name in ("boardgameqa", "dynabench", "supernat") else "") / f"{name}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         rec = {"id": f"{name}-0", "source": name, "state": "s", "instruction": "i", "options": ["a"], "target": 0, "meta": {}}
+        if name == "test":  # two sources in two blocks, as in the real test split
+            rec = [dict(rec, id=f"t{i}", source=s) for i, s in enumerate(("proofwriter", "proofwriter", "synthetic"))]
         if name == "supernat":
             rec |= {"state": SNI_TEXT[0], "instruction": SNI_TEXT[1], "options": [SNI_TEXT[2]],
                     "meta": {"task_id": "task001_x", "category": "Cat", "license": "MIT", "label": SNI_TEXT[2]}}
-        path.write_text(json.dumps(rec) + "\n")
+        path.write_text("".join(json.dumps(r) + "\n" for r in (rec if isinstance(rec, list) else [rec])))
         splits[name] = {"path": path.relative_to(root).as_posix(), "sha256": sha(path), "n": 1}
     (root / "configs").mkdir()
     (root / "configs" / "splits_manifest.json").write_text(json.dumps({"splits": splits}))
@@ -50,6 +52,9 @@ def test_build_release(tmp_path):
         for rel, digest in manifest["files"].items():
             assert sha(out / part / rel) == digest
     assert (out / "dataset" / "data" / "benchmarks" / "supernat_ids.jsonl").exists()
+    order = manifests["dataset"]["test_files_in_order"]
+    assert order == ["data/test_proofwriter.jsonl", "data/test_synthetic.jsonl"]
+    assert hashlib.sha256(b"".join((out / "dataset" / f).read_bytes() for f in order)).hexdigest() == splits["test"]["sha256"]
     for p in out.rglob("*"):
         if p.is_file():
             assert not any(t.encode() in p.read_bytes() for t in SNI_TEXT), p

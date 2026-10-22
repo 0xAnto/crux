@@ -176,7 +176,7 @@ pytest
 The weights and the data are on the Hugging Face Hub. They are not in git.
 
 - Model repo https://huggingface.co/0xanto/crux: `weights/<model>/s<k>/model.safetensors` and `config.yaml` for 11 models, 3 seeds each. The file holds the model state dict only. `README.md` is the model card (`docs/model_card.md`).
-- Dataset repo https://huggingface.co/datasets/0xanto/crux-data: the synthetic splits, `test.jsonl` (synthetic and ProofWriter records), BoardgameQA, and DynaBench. For Super-NaturalInstructions, it holds the task IDs, the per-task licenses, and the record hashes only. It holds no instance. `README.md` is the dataset card (`docs/dataset_card.md`).
+- Dataset repo https://huggingface.co/datasets/0xanto/crux-data: the synthetic splits, the test split as one file per source (`test_synthetic.jsonl`, `test_proofwriter.jsonl`), BoardgameQA, and DynaBench, in 4 configs for `load_dataset`. For Super-NaturalInstructions, it holds the task IDs, the per-task licenses, and the record hashes only. It holds no instance. `README.md` is the dataset card (`docs/dataset_card.md`).
 - Both repos hold `NOTICE`, `LICENSE`, `DATA_LICENSES.md`, and `MANIFEST.json` (SHA-256 of every file, the split hashes, and the git commit).
 
 ## Protocol

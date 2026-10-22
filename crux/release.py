@@ -6,7 +6,8 @@ Run: python -m crux.release [--out release]
   README.md comes from docs/model_card.md.
 - dataset/ (the dataset repo 0xanto/crux-data): data/ with the splits that DATA_LICENSES.md allows to redistribute
   (the synthetic splits, test with the ProofWriter records, BoardgameQA, DynaBench). Super-NaturalInstructions: task
-  IDs and record hashes only, no instances. README.md comes from docs/dataset_card.md.
+  IDs and record hashes only, no instances. The test split is one file per source (test_<source>.jsonl).
+  README.md comes from docs/dataset_card.md.
 Each folder also holds NOTICE, LICENSE, DATA_LICENSES.md, and MANIFEST.json (SHA-256 of every file).
 The builder copies the test split as a file. It does not read the records.
 Upload: hf upload 0xanto/crux release/model . ; hf upload 0xanto/crux-data release/dataset . --repo-type dataset
@@ -51,15 +52,44 @@ def export_weights(root, out):
             (dest / "config.yaml").write_text(yaml.safe_dump(run_config(run, spec, name)))
 
 
+def split_by_source(src, dest_dir, stem):
+    """Write <stem>_<source>.jsonl for each block of one source, with the lines unchanged. The sources of the test
+    split have different meta keys, so one file per source keeps load_dataset (and the Hub viewer) working. Return the
+    sources in file order: the files joined in this order give src again."""
+    order, files = [], {}
+    with open(src, "rb") as f:
+        for line in f:
+            s = json.loads(line)["source"]
+            if not order or order[-1] != s:
+                if s in files:
+                    raise ValueError(f"{src}: source {s} is not one block")
+                order.append(s)
+                files[s] = open(dest_dir / f"{stem}_{s}.jsonl", "wb")
+            files[s].write(line)
+    for f in files.values():
+        f.close()
+    return order
+
+
 def export_data(root, out, splits):
-    """Copy the files of FULL. For IDS_ONLY write the record hashes and the per-task license, never the text."""
+    """Copy the files of FULL (test: one file per source). For IDS_ONLY write the record hashes and the per-task
+    license, never the text. Return the file order of the test sources."""
+    test_order = None
     for name in FULL:
         src = root / splits[name]["path"]
         if sha256(src) != splits[name]["sha256"]:
             raise ValueError(f"{name}: the hash differs from configs/splits_manifest.json")
         dest = out / "data" / Path(splits[name]["path"]).relative_to("data/splits")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dest)
+        if name == "test":
+            test_order = split_by_source(src, dest.parent, "test")
+            h = hashlib.sha256()
+            for s in test_order:
+                h.update((dest.parent / f"test_{s}.jsonl").read_bytes())
+            if h.hexdigest() != splits[name]["sha256"]:
+                raise ValueError("test: the joined source files differ from the frozen split")
+        else:
+            shutil.copyfile(src, dest)
     for name in IDS_ONLY:
         src = root / splits[name]["path"]
         if sha256(src) != splits[name]["sha256"]:
@@ -73,6 +103,7 @@ def export_data(root, out, splits):
                 digest = hashlib.sha256(json.dumps(r, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
                 g.write(json.dumps({"id": r["id"], "task_id": r["meta"]["task_id"], "sha256": digest}) + "\n")
         (dest / f"{name}_tasks.json").write_text(json.dumps(tasks, indent=1, sort_keys=True))
+    return test_order
 
 
 def build(out, root=ROOT):
@@ -82,7 +113,7 @@ def build(out, root=ROOT):
     out.mkdir(parents=True)
     splits = json.loads((root / "configs" / "splits_manifest.json").read_text())["splits"]
     export_weights(root, out / "model")
-    export_data(root, out / "dataset", splits)
+    test_order = export_data(root, out / "dataset", splits)
     shutil.copyfile(root / "configs" / "splits_manifest.json", out / "dataset" / "splits_manifest.json")
     manifests = {}
     for part, card in (("model", "model_card.md"), ("dataset", "dataset_card.md")):
@@ -92,7 +123,7 @@ def build(out, root=ROOT):
         shutil.copyfile(root / "docs" / card, d / "README.md")
         files = {p.relative_to(d).as_posix(): sha256(p) for p in sorted(d.rglob("*")) if p.is_file()}
         manifests[part] = {"commit": commit(), "splits": {n: {"sha256": s["sha256"], "n": s["n"]} for n, s in splits.items()},
-                           "files": files}
+                           "test_files_in_order": [f"data/test_{s}.jsonl" for s in test_order], "files": files}
         (d / "MANIFEST.json").write_text(json.dumps(manifests[part], indent=1))
     return manifests
 
