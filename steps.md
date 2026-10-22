@@ -259,11 +259,79 @@ Parameters (equal to A or B: CF adds no parameter) and latency on the L4, batch 
 
 ## Step 7: Architecture D: CRUX
 
-- [ ] Extend C with independently encoded, cacheable `state` and `instruction` representations, and a permutation-equivariant candidate-scoring module.
-- [ ] Implement shared computation, so that one cached `state` serves many questions.
-- [ ] Ablation **C+cache**: caching only. Independent encoding can decrease accuracy compared with joint encoding. Measure this trade-off.
-- [ ] Ablation **C+equivariant**: candidate scoring only.
-- [ ] Evaluate unseen-rule generalization, option-order invariance, memory consumption, and inference latency (with and without a cache hit).
+- [x] Extend C with independently encoded, cacheable `state` and `instruction` representations, and a permutation-equivariant candidate-scoring module.
+- [x] Implement shared computation, so that one cached `state` serves many questions.
+- [x] Ablation **C+cache**: caching only. Independent encoding can decrease accuracy compared with joint encoding. Measure this trade-off.
+- [x] Ablation **C+equivariant**: candidate scoring only.
+- [x] Evaluate unseen-rule generalization, option-order invariance, memory consumption, and inference latency (with and without a cache hit).
+
+**Done (2026-10-22):**
+- D = C + the split encoding + the set-attention block (`crux/models.py`):
+  - Split encoding (`joint_layers` J = 4): the bottom 3 of the 7 Ettin layers encode the state, the instruction, and each option as separate sequences ([CLS] text [SEP], positions from 0). These bottom-layer states are the cache: they do not depend on the question options or on each other. The top 4 layers (3 to 6, with the 2 global layers 3 and 6) read [state ; instruction ; option] for each option. The real tokens move to the front of the concatenation, so the RoPE positions and the sliding window do not depend on the padding. J is a fixed choice (1 trial). The split encoding adds no parameters.
+  - Set-attention block (`option_attention`): one pre-norm multi-head self-attention block over the pooled vectors of the options of a record, with no positional information and with a key mask for the padded options. The output projection starts at zero, so the block starts as the identity. It adds 263,680 parameters. The scores are permutation-equivariant by construction.
+  - The hypernetwork input z has the same definition as in C (the mean final hidden state over the instruction tokens). Thus C+cache differs from C only in the encoding.
+- Configurations (`configs/step7.yaml`): D (C + both parts), C+cache (C + the split encoding), C+equivariant (C + the block, joint encoding), and the extra control D-CF (B + both parts, without the paired batches and without the consistency loss). D-CF exists because C is worse than B at this budget (Step 6). A and B are the Step 5 runs, and C is the Step 6 run (`runs/step7/A`, `B`, `C` are links).
+- Budget: the same as Steps 5 and 6: 12000 steps, 32 records per batch, 1 trial (lr 3e-5, wd 0.01), 3 seeds, Colab L4, fp16. Separate mode truncates 0 records of train and validation (the longest state has 242 tokens with the limit 256, the longest instruction has 424 with the limit 448).
+- Sweep: 12 of 12 runs on Colab L4, 0 failed (2026-10-21 21:55 to 2026-10-22 02:30), commit `c3acf20`. 13.0 compute units, including an L4 smoke run of D (balance 35.16 before, 22.16 after). VM software: torch 2.11.0, transformers 5.20.1 (Step 6: 5.18.0). Full output: `runs/step7/aggregate.txt` and `aggregate_ref_{B,C,D-CF,C+cache,C+equivariant}.txt`.
+
+Validation, mean ± std over 3 seeds (higher is better; majority baseline 0.333, dev_id majority 0.347):
+
+| Arch | unseen_rule_accuracy | Seeds s0 / s1 / s2 | counterfactual_paired_accuracy | paraphrase_consistency | dev_id accuracy |
+|---|---|---|---|---|---|
+| A | 0.661 ± 0.067 | 0.589 / 0.720 / 0.675 | 0.504 ± 0.087 | 0.698 ± 0.089 | 0.711 ± 0.079 |
+| B | 0.661 ± 0.058 | 0.596 / 0.708 / 0.678 | 0.504 ± 0.082 | 0.734 ± 0.062 | 0.708 ± 0.092 |
+| C | 0.504 ± 0.074 | 0.541 / 0.419 / 0.552 | 0.311 ± 0.071 | 0.569 ± 0.010 | 0.539 ± 0.117 |
+| C+cache | 0.446 ± 0.090 | 0.510 / 0.484 / 0.343 | 0.246 ± 0.092 | 0.718 ± 0.084 | 0.432 ± 0.074 |
+| C+equivariant | 0.564 ± 0.114 | 0.597 / 0.659 / 0.438 | 0.388 ± 0.125 | 0.636 ± 0.098 | 0.608 ± 0.169 |
+| D | 0.451 ± 0.075 | 0.367 / 0.476 / 0.511 | 0.254 ± 0.081 | 0.645 ± 0.039 | 0.439 ± 0.080 |
+| D-CF | 0.398 ± 0.045 | 0.386 / 0.447 / 0.360 | 0.194 ± 0.052 | 0.580 ± 0.152 | 0.376 ± 0.042 |
+
+ECE, mean over 3 seeds (lower is better): A 0.070, B 0.082, C 0.063, C+cache 0.024, C+equivariant 0.071, D 0.040, D-CF 0.081.
+
+Differences, 95% paired bootstrap CI over records (higher is better). "Seed pairs" counts the seed pairs (s0, s1, s2) in which the first model is higher:
+
+| Contrast | Question | unseen_rule_accuracy | counterfactual_paired_accuracy | Seed pairs |
+|---|---|---|---|---|
+| D − A | the protocol test | −0.210 [−0.218, −0.203] | −0.250 [−0.260, −0.240] | 0 of 3 |
+| D − C | D against its base | −0.052 [−0.060, −0.045] | −0.057 [−0.065, −0.049] | 1 of 3 |
+| C+cache − C | the cost of the split encoding | −0.058 [−0.065, −0.051] | −0.065 [−0.073, −0.057] | 1 of 3 |
+| D − C+equivariant | the cost of the split encoding, with the block | −0.113 [−0.120, −0.106] | −0.134 [−0.143, −0.126] | 1 of 3 |
+| C+equivariant − C | the effect of the block | +0.061 [+0.054, +0.067] | +0.077 [+0.070, +0.085] | 2 of 3 |
+| D − C+cache | the effect of the block, with the split encoding | +0.006 [−0.001, +0.012] | +0.008 [+0.000, +0.015] | 1 of 3 |
+| D − D-CF | the effect of CF and the consistency loss, in D | +0.054 [+0.047, +0.061] | +0.060 [+0.053, +0.068] | 2 of 3 |
+| D-CF − B | the effect of both D parts, without CF | −0.263 [−0.271, −0.255] | −0.310 [−0.321, −0.299] | 0 of 3 |
+
+Option-order invariance (validation, a fixed random permutation of the options of each record; 8,407 to 8,422 of the 10,106 records change their order, depending on the seed): the argmax agreement is 1.000 for all 21 runs. The mean absolute probability difference per run is at most 1.1e-6 (the Step 7 runs on the L4 in fp16; A, B, and C with `--eval-only` on the Mac CPU in fp32). The shuffled-order unseen_rule_accuracy differs from the canonical-order value by at most 0.0011. A, B, and C score each option alone, so they are order-invariant by construction too. Thus this metric does not separate D from the other models. The block adds an interaction between the options and keeps the invariance.
+
+Memory and latency on the L4, mean over 3 seeds (lower is better in all columns):
+
+| Arch | Model MB fp16 | Peak CUDA MB above the model, bs1 | bs1 p50 ms, no cache | bs1 p50 ms, state cached | bs1 p50 ms, state and instruction cached |
+|---|---|---|---|---|---|
+| A | 33.73 | n/a | 9.53 | n/a | n/a |
+| C | 34.29 | n/a | 10.78 | n/a | n/a |
+| C+cache | 34.29 | 39.8 | 19.98 | 15.46 | 11.51 |
+| C+equivariant | 34.82 | 39.3 | 11.12 | n/a | n/a |
+| D | 34.82 | 39.8 | 19.80 | 15.67 | 11.76 |
+| D-CF | 34.82 | 39.5 | 20.25 | 16.04 | 12.06 |
+
+Cache size, fp16, mean over the distinct validation items (lower is better): 37.3 KB per state (72.8 tokens), 100.1 KB per instruction (195.5 tokens). Validation has 10,106 records, 5,642 distinct states (1.79 records per state), and 6,728 distinct instructions.
+
+- Result: D is not better than A. Its CIs exclude 0 in the negative direction for both primary metrics (−0.210 and −0.250), and D is lower than A in all 3 seed pairs. Thus Step 7 gives no reliable improvement over A. D is also lower than its base C (−0.052).
+- The split encoding decreases the accuracy: −0.058 from C to C+cache, and −0.113 from C+equivariant to D. Without CF, the loss is larger: D-CF is 0.263 lower than B. C+cache s2 and D s0 stay near chance (0.343, 0.367).
+- The set-attention block helps with the joint encoding (C+equivariant − C = +0.061, 2 of 3 seed pairs), but not with the split encoding (D − C+cache = +0.006, CI includes 0). C+equivariant is the best Step 7 model, but it is 0.097 lower than A. The gain over C is smaller than the seed spread of C+equivariant (std 0.114), so it is weak evidence.
+- CF reverses its sign with the split encoding: in Step 6, CF decreased B (B+CF − B = −0.186). Here, D (with CF and the consistency loss) is 0.054 higher than D-CF. CF does not make D better than A or B.
+- The cache does not make the latency at batch size 1 better than C. Without a cache, D needs 19.80 ms (C: 10.78 ms), because the bottom layers run on 3 sequences of each record and the batch-size-1 time on the L4 is mostly kernel launch time. With the state and the instruction cached, D needs 11.76 ms, which is still 9% more than C. Only 3 of 7 layers are cached: the top 4 layers run on the full concatenation for each option. A larger cache share (smaller J) would be faster, but the split encoding already costs accuracy at J = 4.
+- The peak CUDA memory at batch size 1 is the same for the joint and the split encoding (39.3 to 39.8 MB above the model). The peak memory of A, B, and C is n/a: their `--eval-only` check ran on the CPU.
+- Cause (probable) of the accuracy loss of the split encoding: the bottom layers see the state, the instruction, and the options without each other, the top layers see positions and 3 [CLS]/[SEP] pairs that the pretraining did not have, and the runs learn slowly. 6 of 6 D and C+equivariant runs and 2 of 3 C+cache runs have their best checkpoint at step 11000 or 12000, so the curves still rise at the end.
+- Limitation: 3 seeds, 1 trial, a fixed J = 4, and a fixed consistency weight. The bootstrap CI covers the record sample only, not the seed variance. The result applies to this budget (12000 steps).
+- For Step 8: benchmark D-CF too (the list has A, A-param, A+CF, B, B+CF, C, D, and the two ablations of D). Credit: 22.16 units left for Steps 8 and 9, including the external baselines (Ettin-32M and DeBERTa-v3-xsmall, 3 seeds each).
+
+**Notes from the run:**
+- Files: `crux/models.py` (`joint_layers`, `option_attention`, `encode_bottom`, `forward(..., state_cache=, instruction_cache=)`), `crux/train.py` (`input_mode`: separate mode when J > 0; `order_invariance`, `memory`, and `latency.cache_hit` in `metrics.json`; `--eval-only <run_dir>` writes `order_invariance.json` for old runs), `crux/aggregate.py` (a table for the order invariance, the memory, and the cache), `crux/colab_sweep.py` (downloads `resolved_config.yaml` too), `configs/step7.yaml`, `notebooks/step7_train.ipynb`. 15 new tests. 392 tests pass. A, B, and C stay bit-identical (tiny CPU runs before and after give identical `val_probs`). A review agent checked the padding, the option mapping in batches with 2 to 8 options, the cache equality (difference 0), and the permutation equivariance on the real Ettin-17M.
+- The cache size assumes fp16 storage. Under autocast the hidden states are fp32, so a cache of these states without a cast is 2 times larger.
+- The separate-mode evaluation budget (`row_size` = Ls + Li + K × Lo) does not count the top-layer tokens (K × (Ls + Li + Lo)). Thus the evaluation batches of the split models are larger: peak 631 MB against 171 MB for C+equivariant, and their per-record batch latency (1.46 ms against 1.68 ms) is not comparable. Use the batch-size-1 values.
+- The per-type paired accuracies are in each `metrics.json` (`paired_accuracy/edit_type=...`). The Step 3 count of the multi-choice rule-edit pairs per block (validation: c23 only) is not in this report. Do it in Step 8 for all models.
+- Sweep driver: one setup exec on `crux7-s1` stopped after 420 s, and the next setup worked (2 minutes lost). No VM was lost.
 
 **Carry-over from earlier steps:**
 - Binary options use one canonical order in all sources (positive label first, then negative, then "Unknown"). Shuffle the option order when you measure order invariance (Step 2).
