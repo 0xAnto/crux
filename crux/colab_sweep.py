@@ -133,7 +133,8 @@ class Driver:
         protocol = yaml.safe_load((ROOT / "configs" / "protocol.yaml").read_text())
         n_seeds, n_trials = len(protocol["seeds"]), len(cfg["search"]["trials"])
         # trial first, so that each finished trial has all architectures and seeds
-        self.all = [f"{a}/t{t}/s{s}" for t in range(n_trials) for a in cfg["architectures"] for s in range(n_seeds)]
+        self.all = [f"{a}/t{t}/s{s}" for t in range(n_trials) for a in cfg["architectures"] for s in range(n_seeds)
+                    if (not args.archs or a in args.archs) and (args.seeds is None or s in args.seeds)]
         self.state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {
             "assigned": {}, "failed": [], "created": {}}
 
@@ -309,6 +310,8 @@ def main():
     ap.add_argument("--tick", type=int, default=600, help="seconds between ticks")
     ap.add_argument("--pause", action="store_true", help="start no run; stop each VM when its current run ends")
     ap.add_argument("--stall", type=int, default=1800, help="seconds without a train.log line before a run is stopped")
+    ap.add_argument("--archs", nargs="*", help="only these architectures (default: all; Step 10 reproduction check)")
+    ap.add_argument("--seeds", type=int, nargs="*", help="only these seed indexes (default: all)")
     args = ap.parse_args()
     d = Driver(args)
     d.root.mkdir(parents=True, exist_ok=True)

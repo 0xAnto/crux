@@ -479,6 +479,11 @@ Results against the Step 0 criteria ("reliable" = the CI of the difference to A 
 **Carry-over from earlier steps:**
 - Measure on the Google Pixel 8 only. Keep the same Android OS version for all measurements. Record the OS version and the thread count (Step 0).
 
+**Skipped (2026-10-22, the user's decision):**
+- Step 9 is not done. Deviation from the protocol: Step 0 pre-registered the mobile measurements (model size, peak RAM, p50/p95 latency, and the INT8 accuracy loss on the Google Pixel 8). They are not measured.
+- Reason: no architecture is better than A (Step 8). The best validation result is A (0.661, equal to B), which is the plain Ettin-17M baseline. A mobile benchmark of A measures no CRUX part.
+- The available efficiency data: the parameter counts, the fp16 model size, the peak CUDA memory, and the L4 latency at batch size 1 with and without the cache (Steps 7 and 8). The paper states that no on-device or INT8 measurement exists.
+
 ## Step 10: Research Paper and Release
 
 - [ ] Use the 3-seed results from Steps 5 to 8. If you add more seeds, add them to all configurations.

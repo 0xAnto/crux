@@ -79,7 +79,7 @@ def make(tmp_path, monkeypatch, fake, vms=3):
         (tmp_path / "data" / "splits" / f"{s}.jsonl").write_text("{}\n")
     monkeypatch.setattr(cs.Path, "home", lambda: tmp_path)
     args = SimpleNamespace(config="configs/s.yaml", root="runs", commit="x", steps=6000, prefix="vm", vms=vms,
-                           chunk=3, stall=1800, pause=False)
+                           chunk=3, stall=1800, pause=False, archs=None, seeds=None)
     d = cs.Driver(args)
     d.root.mkdir()
     return d
@@ -149,3 +149,9 @@ def test_pause_finishes_the_current_run_then_stops_all_vms(tmp_path, monkeypatch
             break
     assert not fake.vms
     assert n < len(d.done()) < len(d.all)  # the current runs arrived, the queued runs did not start
+
+
+def test_archs_and_seeds_select_the_runs(tmp_path, monkeypatch):
+    d = make(tmp_path, monkeypatch, FakeColab(max_vms=1))
+    d.a.archs, d.a.seeds = ["B"], [0]
+    assert cs.Driver(d.a).all == ["B/t0/s0", "B/t1/s0"]
