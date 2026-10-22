@@ -1,0 +1,87 @@
+CRUX
+The code, the trained weights, and the synthetic counterfactual dataset of CRUX have the Apache-2.0 license. See LICENSE.
+
+This file gives the attributions that the licenses of the third-party parts require.
+DATA_LICENSES.md records the source and the check date of each license.
+This file is not legal advice.
+
+## Model: Ettin-17M encoder (MIT)
+
+The CRUX weights start from `jhu-clsp/ettin-encoder-17m`.
+Source: https://huggingface.co/jhu-clsp/ettin-encoder-17m
+Paper: Weller, O., Ricci, K., Marone, M., Chaffin, A., Lawrie, D., Van Durme, B. (2026). Seq vs Seq: An Open Suite
+of Paired Encoders and Decoders (Ettin). ICLR 2026. arXiv:2507.11412.
+
+From https://github.com/JHU-CLSP/ettin-encoder-vs-decoder/blob/main/LICENSE (read 2026-10-22):
+
+Copyright (c) 2025 Johns Hopkins University Center for Language and Speech Processing
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
+Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## Data in the release
+
+### ProofWriter (CC BY 4.0)
+
+`data/test.jsonl` contains records that CRUX derived from ProofWriter (the open-world sets depth5, birds_electricity,
+and pararules). CRUX changed the format of the records.
+Tafjord, O., Dalvi Mishra, B., Clark, P. (2021). ProofWriter: Generating Implications, Proofs, and Abductive Statements
+over Natural Language. Findings of ACL 2021. arXiv:2012.13048.
+Source: https://allenai.org/data/proofwriter
+License: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/
+
+### RuleTaker (Apache-2.0)
+
+The ProofWriter sets above can contain theories and questions that come from RuleTaker. The release keeps its license
+notice.
+Clark, P., Tafjord, O., Richardson, K. (2020). Transformers as Soft Reasoners over Language. IJCAI 2020.
+arXiv:2002.05867.
+Source: https://allenai.org/data/ruletaker (archived snapshot 2023-02-08), https://github.com/allenai/ruletaker
+License: Apache License 2.0, https://www.apache.org/licenses/LICENSE-2.0
+
+### BoardgameQA (CC BY)
+
+`data/benchmarks/boardgameqa.jsonl` contains records that CRUX derived from BoardgameQA. CRUX changed the format of the records.
+Kazemi, M., Yuan, Q., Bhatia, D., Kim, N., Xu, X., Imbrasaite, V., Ramachandran, D. (2023). BoardgameQA: A Dataset for
+Natural Language Reasoning with Contradictory Information. NeurIPS 2023 (Datasets and Benchmarks). arXiv:2306.07934.
+Source: https://storage.googleapis.com/gresearch/BoardgameQA/BoardgameQA.zip
+License: CC BY. The paper does not state a version.
+
+### DynaBench of the DynaGuard paper (MIT)
+
+`data/benchmarks/dynabench.jsonl` contains the 543 test records of the `DynaBench` subset. CRUX changed the format of
+the records.
+Hoover, M., Baherwani, V., Jain, N., Saifullah, K., Vincent, J., Jain, C., Kazemi Rad, M., Bruss, C. B., Panda, A.,
+Goldstein, T. (2025). DynaGuard: A Dynamic Guardian Model With User-Defined Policies. arXiv:2509.02563.
+Source: https://huggingface.co/datasets/montehoover/DynaBench
+License: MIT.
+The dataset card gives no copyright line. The DynaGuard repository LICENSE (MIT, read 2026-10-22) has:
+Copyright (c) 2025 Monte Hoover
+This data is not the Facebook "Dynabench" platform.
+
+### Super-NaturalInstructions (task IDs and hashes only)
+
+The release contains no task instance of Super-NaturalInstructions.
+`data/benchmarks/supernat_ids.jsonl` holds the record ID, the task ID, and a SHA-256 hash of each evaluation record.
+`data/benchmarks/supernat_tasks.json` holds the category and the `Instance License` value of each task.
+Wang, Y., Mishra, S., Alipoormolabashi, P., et al. (2022). Super-NaturalInstructions: Generalization via Declarative
+Instructions on 1600+ NLP Tasks. EMNLP 2022. arXiv:2204.07705.
+Source: https://github.com/allenai/natural-instructions
+The repository data, except the task instances, has the Apache-2.0 license.
+Each task instance set has the license of the original dataset.
+To rebuild the records, run `python -m crux.data.supernat`, and compare the hashes.
+
+### Synthetic data
+
+`data/train.jsonl`, `data/dev_id.jsonl`, `data/validation.jsonl`, and the synthetic part of `data/test.jsonl` come from
+the CRUX generator (Step 3). The license is Apache-2.0.

@@ -186,7 +186,7 @@ Difference to A, unseen_rule_accuracy, 95% paired bootstrap CI over records (hig
 Latency on the L4, batch size 1, p50 ms (lower is better): A 9.53, B 10.68, B-abl 11.93, A-param 14.37 (A-param with the unmerged LoRA).
 
 - Result: B is equal to A (the CI includes 0) at 12% more latency. The instruction-conditioned head gives no gain.
-- B-abl and A-param (extra encoder parameters) stay at chance in 1 of 3 seeds. Their other 2 seeds (B-abl 0.703, 0.687; A-param 0.673, 0.697) are at or above the best seeds of A. So the extra encoder parameters can help, but they make the training less reliable. The conditioning (B-abl) gives no gain over the static control (A-param).
+- B-abl and A-param (extra encoder parameters) stay at chance in 1 of 3 seeds. Their other 2 seeds (B-abl 0.703, 0.687; A-param 0.673, 0.697) are above the mean of A (0.661). So the extra encoder parameters can help, but they make the training less reliable. The conditioning (B-abl) gives no gain over the static control (A-param).
 - Compared with 6000 steps: A rises from 0.561 ± 0.192 to 0.661 ± 0.067, and no run of A or B stays at chance. 8 of 12 runs have their best checkpoint before step 12000, so the curves are flat at the end.
 - Limitation: 3 seeds and 1 trial. The bootstrap CI covers the record sample only, not the seed variance.
 - For Step 6: C builds on B, and B equals A here. The Step 6 controls (A+CF, B+CF) must show if the counterfactual data or the consistency loss gives a gain. Credit: the 49.8 units cover Steps 6 and 7 at about 14 units each (3 configurations x 3 seeds, 12000 steps, 1 trial), with about 20 units in reserve.
