@@ -1,0 +1,18 @@
+# Step 8: evaluation settings, the same for all models. A copy of configs/step2_data.yaml with larger length limits.
+# The tokenizer key is not used: crux.benchmark takes the tokenizer from the data config of each run.
+# Reason: DynaBench has up to 5,489 joint tokens (Ettin tokenizer; DeBERTa-v3: 5,095) and BoardgameQA up to 1,080.
+# With these limits no record of the validation split, the test split, or the three benchmarks is truncated, in the joint
+# mode or in the separate mode, with the Ettin and the DeBERTa-v3 tokenizer.
+
+tokenizer: jhu-clsp/ettin-encoder-17m
+
+# Joint mode (A, B, C): one sequence per option. Longest joint sequence: 5,489 tokens.
+max_length: 5600
+# Separate mode (D): the longest state has 2,271 tokens and the longest instruction has 5,393 tokens.
+max_state_length: 2400
+max_instruction_length: 5500
+max_option_length: 32
+
+# Evaluation: a batch holds records while (records x padded row size) <= max_tokens. Same as Step 2.
+max_tokens: 16384
+max_batch_size: 128

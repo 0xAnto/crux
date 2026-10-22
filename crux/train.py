@@ -327,9 +327,10 @@ def train(cfg, data, tokenizer, model, out, device, steps, seed):
 
 def load_config(path, arch=None, trial=None, overrides=()):
     cfg = yaml.safe_load(Path(path).read_text())
-    if arch:  # an architecture sets model keys, and with its `train` key also train keys (Step 6)
+    if arch:  # an architecture sets model keys, with its `train` key train keys (Step 6), with `data_config` the data config
         a = dict(cfg["architectures"][arch])
         cfg["train"].update(a.pop("train", {}))
+        cfg["data_config"] = a.pop("data_config", cfg["data_config"])  # Step 8: a baseline has its own tokenizer
         cfg["model"].update(a)
     if trial is not None:
         cfg["train"].update(cfg["search"]["trials"][trial])

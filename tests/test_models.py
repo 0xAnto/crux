@@ -5,6 +5,7 @@ import math
 import numpy as np
 import pytest
 import torch
+import yaml
 from transformers import ModernBertConfig, ModernBertModel
 
 from crux.aggregate import bootstrap_ci
@@ -537,3 +538,50 @@ def test_shuffle_options_is_fixed_and_keeps_the_target_on_the_same_option():
             assert s["target"] == [r["target"][p] for p in perm]
         else:
             assert s["options"][s["target"]] == r["options"][r["target"]]
+
+
+def tiny_deberta():
+    from transformers import DebertaV2Config, DebertaV2Model
+    torch.manual_seed(0)
+    cfg = DebertaV2Config(vocab_size=64, hidden_size=32, intermediate_size=48, num_hidden_layers=2, num_attention_heads=2,
+                          max_position_embeddings=64, relative_attention=True, position_buckets=8, pos_att_type=["p2c", "c2p"],
+                          position_biased_input=False, type_vocab_size=0, pad_token_id=PAD, share_att_key=True,
+                          norm_rel_ebd="layer_norm", attn_implementation="eager")
+    return DebertaV2Model(cfg)
+
+
+def test_a_on_a_deberta_encoder_scores_the_real_options_and_trains():
+    import crux.train as T
+    m = Scorer(tiny_deberta(), "A").eval()
+    x = batch(instr=(10, 11, 12), n_opts=(3, 2))
+    with torch.no_grad():
+        logits = m(**x)
+        alone = m(**batch(instr=(10, 11, 12), n_opts=(3,)))
+    assert logits.shape == (2, 3) and torch.isinf(logits[1, 2]) and logits[1, 2] < 0
+    assert torch.isfinite(logits[x["option_mask"]]).all()
+    assert torch.allclose(logits[0], alone[0], atol=1e-5)  # the padding of the other record does not matter
+    m.train()
+    opt = T.make_optimizer(m, {"lr": 1e-2, "new_lr_mult": 1, "weight_decay": 0.01})
+    assert {id(p) for p in m.pretrained_params()} == {id(p) for p in m.encoder.parameters()}
+    before = [p.detach().clone() for p in m.parameters()]
+    loss = torch.nn.functional.cross_entropy(m(**x), torch.tensor([0, 1]))
+    loss.backward()
+    opt.step()
+    assert torch.isfinite(loss) and m.out.weight.grad is not None
+    assert any(not torch.equal(a, p) for a, p in zip(before, m.encoder.parameters()))  # the encoder trains too
+
+
+def test_an_encoder_that_is_not_modernbert_supports_only_arch_a():
+    for kw in ({"arch": "B"}, {"arch": "A", "joint_layers": 1}):
+        with pytest.raises(ValueError):
+            Scorer(tiny_deberta(), **kw)
+
+
+def test_an_architecture_can_set_the_data_config_and_the_baselines_share_the_budget():
+    c32, cd = (load_config("configs/step8_baselines.yaml", a, 0) for a in ("Ettin-32M", "DeBERTa-v3-xsmall"))
+    assert c32["data_config"] == "configs/step2_data.yaml" and cd["data_config"] == "configs/step8_deberta_data.yaml"
+    assert "data_config" not in cd["model"] and cd["model"]["id"] == "microsoft/deberta-v3-xsmall"
+    assert cd["model"]["arch"] == c32["model"]["arch"] == "A" and cd["train"] == c32["train"]
+    d2, d8 = (yaml.safe_load(open(f"configs/{n}.yaml")) for n in ("step2_data", "step8_deberta_data"))
+    assert {k: v for k, v in d8.items() if k != "tokenizer"} == {k: v for k, v in d2.items() if k != "tokenizer"}
+    assert load_config("configs/step6.yaml", "C", 0)["data_config"] == "configs/step2_data.yaml"

@@ -1,0 +1,25 @@
+# Step 8: the models that crux.benchmark evaluates, each with 3 seeds (trial 0, best.pt from the validation selection).
+# A model whose run folder does not exist is skipped (the external baselines of runs/step8 come later).
+# `config`: the step config for a run folder without resolved_config.yaml (Steps 5 and 6). The model name is the key of
+# `architectures` in that config. `family` groups the colors of the plots.
+
+eval_data_config: configs/step8_eval_data.yaml
+out_root: runs/step8/eval          # <out_root>/<model>/s<seed index>/bench.json and probs_<set>.npz
+report: runs/step8/benchmark       # benchmark.txt, benchmark.json, plots/
+sets: [boardgameqa, dynabench, supernat, validation, test]   # test last: a failure on a long input comes before the test split is used
+reference: A                       # every difference uses the same seed of A as the pair (configs/protocol.yaml)
+
+models:
+  A:             {root: runs/step5, config: configs/step5.yaml, family: A}
+  A-param:       {root: runs/step5, config: configs/step5.yaml, family: A}
+  A+CF:          {root: runs/step6, config: configs/step6.yaml, family: A}
+  B:             {root: runs/step5, config: configs/step5.yaml, family: BC}
+  B-abl:         {root: runs/step5, config: configs/step5.yaml, family: BC}
+  B+CF:          {root: runs/step6, config: configs/step6.yaml, family: BC}
+  C:             {root: runs/step6, config: configs/step6.yaml, family: BC}
+  C+cache:       {root: runs/step7, config: configs/step7.yaml, family: D}
+  C+equivariant: {root: runs/step7, config: configs/step7.yaml, family: D}
+  D:             {root: runs/step7, config: configs/step7.yaml, family: D}
+  D-CF:          {root: runs/step7, config: configs/step7.yaml, family: D}
+  Ettin-32M:         {root: runs/step8, config: configs/step8_baselines.yaml, family: external}
+  DeBERTa-v3-xsmall: {root: runs/step8, config: configs/step8_baselines.yaml, family: external}

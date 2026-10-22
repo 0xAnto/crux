@@ -8,3 +8,8 @@ pyyaml
 pytest
 # The Step 3 dataset audit (crux/gen/audit.py) trains small probe models.
 scikit-learn
+# The tokenizer of DeBERTa-v3-xsmall (Step 8) converts spm.model; transformers 5 needs both packages.
+sentencepiece
+protobuf
+# The Step 8 plots (crux/plots.py).
+matplotlib

@@ -209,24 +209,25 @@ def baselines(splits, theories):
     return out
 
 
-def fact_count(splits, theories):
+def fact_count(splits, theories, names=STATS):
     """The Step 3 fact-count baseline on the frozen splits. Reuse the probe of crux/gen/audit.py: a gradient-boosting
     classifier on the true, false, and missing facts of the queried entity on the query path. It trains on the
     orig binary records of depth 1 or more in train, balanced by label in each composition. It scores the balanced
-    orig records of dev_id and validation (accuracy; chance is about 1/3). It does not read test."""
+    orig records of dev_id and validation (accuracy; chance is about 1/3). It does not read test, unless Step 8
+    passes `names` with "test" (the first name is the train split)."""
     from crux.gen import audit
 
-    recs = [r for k in STATS for r in splits[k]
+    recs = [r for k in names for r in splits[k]
             if r["source"] == "synthetic" and r["task_type"] == "binary" and r["meta"]["pair_role"] == "orig"
             and r["meta"]["depth"] >= 1]
-    where = {r["id"]: k for k in STATS for r in splits[k]}
+    where = {r["id"]: k for k in names for r in splits[k]}
     rows = [(audit.qsplit(it)[:4], it["m"]["label"], where[it["rec"]["id"]], it["m"]["unit_id"], it["m"]["composition_id"])
             for it in audit.build_items(recs, theories).values() if it["q"]["type"] == "binary" and it["s"] is not None]
     rows, _ = audit._balanced(rows)
     fit = [r for r in rows if r[2] == "train"]
     model = audit.gbm().fit(np.array([r[0] for r in fit], dtype=float), [r[1] for r in fit])
     out = {}
-    for k in STATS[1:]:  # the accuracy on train is in-sample
+    for k in names[1:]:  # the accuracy on train is in-sample
         te = [r for r in rows if r[2] == k]
         if te:
             pred = model.predict(np.array([r[0] for r in te], dtype=float))

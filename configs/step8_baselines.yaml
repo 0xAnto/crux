@@ -1,0 +1,51 @@
+# Step 8: the external baselines, Ettin-32M and DeBERTa-v3-xsmall (configs/protocol.yaml, external_baselines).
+# Run one job: python -m crux.train --config configs/step8_baselines.yaml --arch Ettin-32M --trial 0 --seed-index 0
+# Run the sweep: python -m crux.colab_sweep --config configs/step8_baselines.yaml --root runs/step8 --prefix crux8-s --commit <commit>
+# The plan: 2 baselines x 1 trial x 3 seeds = 6 runs, with the budget and the trial of the Step 5 rerun (12000 steps, lr 3e-5, wd 0.01).
+# Both baselines are architecture A (mean pooling, the same decision head, full fine-tune) on another encoder.
+# The protocol reference is A on Ettin-17M (runs/step5/A). Do not run it again: link runs/step8/A to it before crux.aggregate.
+# Same frozen train split and same 32 records per batch as A. DeBERTa-v3-xsmall has another tokenizer, so it has its own data config.
+# The tokenizer of Ettin-32M is the same file as that of Ettin-17M (same SHA-256), so it uses configs/step2_data.yaml.
+# The steps come from budget.training_steps in configs/protocol.yaml. Do not set train.steps (smoke runs only).
+
+data_config: configs/step2_data.yaml   # tokenizer, max_length, train_batch_size (32), evaluation token budget
+out_root: runs/step8
+
+model:
+  id: jhu-clsp/ettin-encoder-17m   # set by --arch
+  attn_implementation: sdpa        # DeBERTa-v3 does not support sdpa in transformers 5: its entry sets eager
+  arch: A              # A for both baselines
+
+train:
+  lr: 3.0e-5           # the encoder. Set by the trial. Not 1e-4 (Step 1: near chance)
+  new_lr_mult: 1       # new modules (head, hypernetwork, LoRA) train at lr x this value. Equal for all architectures. Not 10 (steps.md, Step 5)
+  weight_decay: 0.01   # set by the trial
+  warmup_ratio: 0.06   # as in Step 1 and ModernBERT
+  max_grad_norm: 1.0
+  fp16: true           # autocast and GradScaler on CUDA only
+  eval_every: 1000     # full validation split. Selection of the checkpoint on validation only
+  log_every: 100
+  num_workers: 0       # the items are tokenized before training; a worker needs a picklable dataset (spawn, forkserver)
+  selection_metric: unseen_rule_accuracy   # the first primary metric of the protocol
+  steps: null          # smoke runs only
+  seed_index: 0
+  paired: false        # Step 6: unit-paired batches (set by the architecture)
+  consistency_weight: 0.0   # Step 6: weight of the paraphrase consistency loss (set by the architecture)
+
+data:
+  max_train: null      # smoke runs only: keep the first N records
+  max_eval: null       # smoke runs only
+
+latency:               # on the run device, forward only, fp16 on CUDA
+  warmup: 10
+  n_batch1: 200
+  n_batches: 50
+
+architectures:
+  # The encoder id, the attention implementation, and the data config come from the architecture.
+  Ettin-32M: {id: jhu-clsp/ettin-encoder-32m, arch: A}
+  DeBERTa-v3-xsmall: {id: microsoft/deberta-v3-xsmall, arch: A, attn_implementation: eager, data_config: configs/step8_deberta_data.yaml}
+
+search:                # the same trial for every architecture
+  trials:
+    - {lr: 3.0e-5, weight_decay: 0.01}

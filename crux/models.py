@@ -11,6 +11,8 @@ The softmax over the real options of a record gives the probabilities. Padded op
   after layer L-K-1, so one encoder pass is enough. The B factors start at zero, so B starts equal to A.
   The encoder factors are bounded (see `bound`): no norm follows the delta, and unbounded factors overflow fp16.
 - A-param: A + a static LoRA with the same number of trainable parameters as the hypernetwork of B.
+- External baselines (Step 8): A on an encoder that is not ModernBERT (DeBERTa-v3-xsmall). The encoder runs on the option
+  sequences with its own `forward`; the pooling and the head are those of A. Only arch A and the joint encoding use this path.
 
 Step 7 (architecture D = C + two options of the model, both off by default):
 - `joint_layers` J > 0 (split encoding, as in DeFormer): the input is [CLS] state [SEP], [CLS] instruction [SEP], and
@@ -151,11 +153,14 @@ class Scorer(nn.Module):
         if arch not in ARCHS or (arch == "A" and hyper_layers):
             raise ValueError(f"unknown arch {arch!r}, or hyper_layers with arch A")
         c = encoder.config
+        self.generic = c.model_type != "modernbert"  # an encoder with its own forward (Step 8): arch A only
+        if self.generic and (arch != "A" or joint_layers):
+            raise ValueError("an encoder that is not ModernBERT supports only arch A with joint_layers 0")
         if joint_layers and (hyper_layers or not 0 < joint_layers <= c.num_hidden_layers):
             raise ValueError("joint_layers must be in 1..L, and it does not combine with hyper_layers")
-        self.encoder, self.arch, self.sep_id, self.J = encoder, arch, c.sep_token_id, joint_layers
+        self.encoder, self.arch, self.sep_id, self.J = encoder, arch, getattr(c, "sep_token_id", None), joint_layers
         self.K = hyper_layers if arch == "B" else 0
-        d, layers = c.hidden_size, encoder.layers
+        d, layers = c.hidden_size, [] if self.generic else encoder.layers
         self.dense = Lora(nn.Linear(d, d, bias=False))
         self.norm, self.out = nn.LayerNorm(d), nn.Linear(d, 1)
         # B: the adapted linears are Wqkv and Wo of the top K layers.
@@ -273,6 +278,8 @@ class Scorer(nn.Module):
                 self.encode_bottom(instruction_ids, instruction_mask) if instruction_cache is None else instruction_cache)
             return self._score(h, mask, pairs, option_mask, ex)
         ids, mask = input_ids[option_mask], attention_mask[option_mask]
+        if self.generic:
+            return self._score(enc(input_ids=ids, attention_mask=mask).last_hidden_state, mask, None, option_mask, ex)
         h = enc.embeddings(input_ids=ids)
         run = self._runner(h, mask)
 
@@ -295,9 +302,11 @@ class Scorer(nn.Module):
 
 
 def build_model(cfg, encoder=None):
-    """cfg: the `model` section of the config. `encoder` is for tests (a tiny random ModernBERT)."""
+    """cfg: the `model` section of the config. `encoder` is for tests (a tiny random encoder)."""
     if encoder is None:
-        encoder = AutoModel.from_pretrained(cfg["id"], attn_implementation=cfg.get("attn_implementation", "sdpa"))
+        # dtype fp32: the DeBERTa checkpoint is fp16, and transformers 5 keeps the checkpoint dtype. The Ettin checkpoints are fp32.
+        encoder = AutoModel.from_pretrained(cfg["id"], attn_implementation=cfg.get("attn_implementation", "sdpa"),
+                                            dtype=torch.float32)
     return Scorer(encoder, cfg["arch"], cfg.get("rank", 8), cfg.get("hyper_layers", 0), cfg.get("hyper_hidden", 64),
                   cfg.get("joint_layers", 0), cfg.get("option_attention", False))
 

@@ -1,0 +1,17 @@
+# Step 2: tokenization and batching settings for schema records (see docs/schema.md).
+# The values are choices of the author. Truncation counts per source: see docs/schema.md.
+
+tokenizer: microsoft/deberta-v3-xsmall   # the only change to step2_data.yaml (Step 8). [CLS] 1, [SEP] 2, pad 0
+
+# Joint mode (A, B, C): one sequence per record, or one per option. Includes [CLS] and the [SEP] tokens.
+max_length: 640
+# Separate mode (D): each field is one sequence with [CLS] and [SEP]. max_option_length applies in both modes.
+max_state_length: 256
+max_instruction_length: 448
+max_option_length: 32
+
+# Training: a fixed number of records per batch in all modes (equal budget: same steps, same data).
+train_batch_size: 32
+# Evaluation: a batch holds records while (records x padded row size) <= max_tokens.
+max_tokens: 16384
+max_batch_size: 128
