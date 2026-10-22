@@ -15,8 +15,6 @@
 \setlength{\emergencystretch}{3em}
 
 % ---------- Macros ----------
-% Placeholder for the result of the reproduction check (still running when this draft was written).
-\newcommand{\REPRO}{\textcolor{red}{[reproduction result pending]}}
 % Placeholder for facts that the release step must add.
 % Model names and metric names are Technical Names. \M escapes nothing: write + and - as they are.
 \newcommand{\M}[1]{\texttt{#1}}
@@ -940,7 +938,7 @@ We make no claim about larger models, longer training, other forms of counterfac
 \section{Limitations}\label{sec:limits}
 
 \begin{itemize}
-  \item \textbf{Seeds, trials, steps.} We use 3 seeds, one hyperparameter trial, and 12{,}000 steps for every model. The bootstrap CI covers the record sample only, not the seed variance. On the ProofWriter sets, the seed spread is larger than most differences.
+  \item \textbf{Seeds, trials, steps.} We use 3 seeds, one hyperparameter trial, and 12{,}000 steps for every model. The bootstrap CI covers the record sample only, not the seed variance. On the ProofWriter sets, the seed spread is larger than most differences. The training is not deterministic: a rerun with the same seed differs by $0.104$ (A) and $0.117$ (D) on validation \ura{} (Section~\ref{sec:repro}).
   \item \textbf{Fixed design choices.} The consistency weight (1.0), the rank (8), the hypernetwork width (64), the number of joint layers ($J = 4$), and the form of CF batches are fixed choices. We did not search them.
   \item \textbf{No external baselines.} We did not evaluate fine-tuned Ettin-32M and DeBERTa-v3-xsmall. So we have no comparison with a model with different pretraining. We did not evaluate Jev.
   \item \textbf{Shared initialization and contamination.} All 11 models share the Ettin-17M initialization, so a contamination affects them equally. The sentence frames and names of \texttt{depth5} occur in the Ettin pretraining data (maximum 8-gram share $0.10$ for a kept record). Super-NaturalInstructions is not scanned, and it is possibly seen in pretraining. We did not check web-crawl sources for BoardgameQA and DynaBench.
@@ -998,12 +996,33 @@ The compute use was about 18 compute units for the Step 5 rerun (12 runs), 14.6 
 Each Step 8 evaluation of one run took about 2.5 to 3 minutes (test: 42{,}221 records in 86 to 105 seconds).
 
 \paragraph{Reproduction check.}
-We train A with seed index 0 (seed 13) and D with seed index 0 (seed 13) again from a clean Colab VM at commit \texttt{2d3e4b0}.
-The release build of the code is at commit \texttt{a00d586}.
-The check compares the new numbers with the numbers of this paper and with the seed spread.
-\REPRO{}
-Bit-exact equality is not expected, because the runs use fp16 on a GPU and the library versions can differ.
-The seed spread of the results in this paper (for example A on validation: $0.589$, $0.720$, $0.675$ for the 3 seeds) sets the scale of a comparison.
+We trained A and D again with seed index 0 (seed 13), each on a new Colab L4 VM, at commit \texttt{2d3e4b0}, with the configs of Steps 5 and 7.
+The two runs used 2.7 compute units.
+The release build of the code is at commit \texttt{4197975}.
+Table~\ref{tab:repro} compares the reruns with the original runs of the same seed.
+
+\begin{table}[t]
+\centering
+\caption{Reproduction check on validation: the original run and a rerun with the same seed (seed 13), same config, and same code path (higher is better in all value columns).}
+\label{tab:repro}
+\begin{tabular}{lcccc}
+\toprule
+ & \multicolumn{2}{c}{\ura{}} & \multicolumn{2}{c}{\cpa{}} \\
+Run & original & rerun & original & rerun \\
+\midrule
+A, seed 13 & $0.589$ & $0.693$ & $0.411$ & $0.546$ \\
+D, seed 13 & $0.367$ & $0.484$ & $0.161$ & $0.282$ \\
+D $-$ A, seed 13 & $-0.222$ & $-0.210$ & $-0.250$ & $-0.264$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The same seed does not give the same result: the rerun is $0.104$ higher for A and $0.117$ higher for D on \ura{}.
+Each rerun is inside the range of the 3 original seeds (A: $0.589$ to $0.720$; D: $0.367$ to $0.511$), so the reported numbers are reproduced within the seed variance, but not per seed.
+The probable cause is non-deterministic GPU computation: the code sets the random seeds but does not enable deterministic algorithms, and the runs use fp16.
+The library versions on the VMs are not pinned and not recorded in the run outputs, so a version difference is also possible.
+The difference D $-$ A for the same seed is almost the same in both pairs ($-0.222$ and $-0.210$ on \ura{}; $-0.250$ and $-0.264$ on \cpa{}), so the conclusion does not change.
+The check also shows that the seed spread of the results contains run-to-run variation of the same order. The bootstrap CIs, which cover the records only, do not contain it.
 
 \paragraph{Not in the repository.}
 The run outputs (\texttt{runs/}) are not in git.

@@ -486,12 +486,42 @@ Results against the Step 0 criteria ("reliable" = the CI of the difference to A 
 
 ## Step 10: Research Paper and Release
 
-- [ ] Use the 3-seed results from Steps 5 to 8. If you add more seeds, add them to all configurations.
-- [ ] Write a LaTeX paper about the methodology, the datasets, the architecture, the experiments, the ablations, the limitations, and the conclusions. Include negative results.
-- [ ] Release the code, the configs, the split hashes, the weights, and the data where the licenses permit.
-- [ ] Make sure that a clean Colab run of the notebooks gives the reported numbers within the seed variance.
+- [x] Use the 3-seed results from Steps 5 to 8. If you add more seeds, add them to all configurations.
+- [x] Write a LaTeX paper about the methodology, the datasets, the architecture, the experiments, the ablations, the limitations, and the conclusions. Include negative results.
+- [x] Release the code, the configs, the split hashes, the weights, and the data where the licenses permit.
+- [x] Make sure that a clean Colab run of the notebooks gives the reported numbers within the seed variance. Deviation: a reduced check (A and D, seed index 0, with the sweep driver), not a run of all notebooks.
 
 **Carry-over from earlier steps:**
 - Give attribution to ProofWriter (CC BY 4.0). Keep the MIT copyright notice of Ettin (Step 0).
 - Do not redistribute Super-NaturalInstructions instances. Release the task IDs and hashes only (Step 0).
 - Make novelty claims only for the combination of parts (Step 0, `docs/literature_review.md`).
+
+**Done (2026-10-22):**
+- Paper: `paper/main.tex`, `paper/refs.bib`, `paper/figures/`, and the compiled `paper/main.pdf` (24 pages, tectonic 0.16.9). Author: Antony Ranjith F. The paper states the negative result, all deviations (no external baselines, no Jev, Step 9 skipped, 1 trial, the budget set after the 6000-step pilot, the edits of `protocol.yaml` after the freeze, T4 → L4), and the limitations of Step 8. It claims novelty only for the combination of parts.
+- Fact check: a separate agent checked about 1,000 numbers of the paper against the run files and this record. All result values, CIs, and marks match (15 values differ by 1 unit in the last digit, from double rounding). The 14 findings on claims and wording are fixed. Examples: "pre-registered" now covers only the seeds, the metrics, and the statistics; "B equals A" names the metric; the edit-type counts are pairs, not units; D − C+cache on counterfactual_paired_accuracy has the CI [+0.0003, +0.0145]. A later check fixed the DynaBench maximum (+0.037, not +0.038).
+- Release on the Hugging Face Hub (public), built by `crux/release.py` at commit `4197975`:
+  - https://huggingface.co/0xanto/crux: the 33 weights (`weights/<model>/s<k>/model.safetensors`, the model state dict of `best.pt`, fp32) with their configs, the model card (`docs/model_card.md`, with a usage script that was run for A, B, and D), `NOTICE`, `LICENSE`, `DATA_LICENSES.md`, and `MANIFEST.json`.
+  - https://huggingface.co/datasets/0xanto/crux-data: the synthetic splits, the test split as one file per source (`test_proofwriter.jsonl`, `test_synthetic.jsonl`; joined in this order they give the frozen SHA-256, and the builder checks it), BoardgameQA, DynaBench, and the Super-NaturalInstructions record IDs and hashes only (no instances). The dataset card (`docs/dataset_card.md`) has 4 configs. All 4 load with `load_dataset` from the local folder.
+  - `NOTICE`: the copyright lines of Ettin (Johns Hopkins University Center for Language and Speech Processing) and DynaBench (Monte Hoover) come from their LICENSE files. ProofWriter, RuleTaker, BoardgameQA, and Super-NaturalInstructions have attribution entries. `LICENSE` has the filled notice "Copyright 2026 Antony Ranjith F.".
+  - The 2 cards follow the Hugging Face model release checklist and the dataset upload guide. One repository holds all 11 models (the user's choice), not one repository per model.
+- README: rewritten for readers (the result, the architectures, the deviations, the setup, the commands of each step, the release, and a citation).
+
+Reproduction check (validation, the same seed 13, a new Colab L4 VM, commit `2d3e4b0`, 2.7 compute units; higher is better in all value columns):
+
+| Run | unseen_rule_accuracy, original | unseen_rule_accuracy, rerun | counterfactual_paired_accuracy, original | counterfactual_paired_accuracy, rerun |
+|---|---|---|---|---|
+| A | 0.589 | 0.693 | 0.411 | 0.546 |
+| D | 0.367 | 0.484 | 0.161 | 0.282 |
+| D − A | −0.222 | −0.210 | −0.250 | −0.264 |
+
+- Each rerun is inside the range of the 3 original seeds (A: 0.589 to 0.720; D: 0.367 to 0.511). Thus the reported numbers are reproduced within the seed variance, but not per seed: the same seed gives +0.104 (A) and +0.117 (D).
+- Cause (probable): non-deterministic GPU computation in fp16. `crux/train.py` sets the seeds but does not enable deterministic algorithms. The VM library versions are not pinned and not recorded in `metrics.json`, so a version difference is also possible.
+- D − A for the same seed stays almost the same (−0.222 and −0.210; −0.250 and −0.264), so the conclusion does not change.
+- Consequence: the seed spread of all results contains run-to-run variation of the same order. The paper states this in the reproducibility section and in the limitations.
+- Credit: 15.64 compute units left.
+
+**Open items:**
+- The external baselines (Ettin-32M, DeBERTa-v3-xsmall) can run later with `configs/step8_baselines.yaml`.
+- To make the training deterministic, set `torch.use_deterministic_algorithms(True)` and pin and record the library versions. This is not done, because the results of Steps 5 to 8 come from the current code.
+- The paper is not on arXiv. The citation points to the GitHub repository.
+
