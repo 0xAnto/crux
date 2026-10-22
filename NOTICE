@@ -1,4 +1,6 @@
 CRUX
+Copyright 2026 Antony Ranjith F.
+
 The code, the trained weights, and the synthetic counterfactual dataset of CRUX have the Apache-2.0 license. See LICENSE.
 
 This file gives the attributions that the licenses of the third-party parts require.
@@ -33,7 +35,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 
 ### ProofWriter (CC BY 4.0)
 
-`data/test.jsonl` contains records that CRUX derived from ProofWriter (the open-world sets depth5, birds_electricity,
+`data/test_proofwriter.jsonl` contains records that CRUX derived from ProofWriter (the open-world sets depth5, birds_electricity,
 and pararules). CRUX changed the format of the records.
 Tafjord, O., Dalvi Mishra, B., Clark, P. (2021). ProofWriter: Generating Implications, Proofs, and Abductive Statements
 over Natural Language. Findings of ACL 2021. arXiv:2012.13048.
@@ -83,5 +85,5 @@ To rebuild the records, run `python -m crux.data.supernat`, and compare the hash
 
 ### Synthetic data
 
-`data/train.jsonl`, `data/dev_id.jsonl`, `data/validation.jsonl`, and the synthetic part of `data/test.jsonl` come from
+`data/train.jsonl`, `data/dev_id.jsonl`, `data/validation.jsonl`, and `data/test_synthetic.jsonl` come from
 the CRUX generator (Step 3). The license is Apache-2.0.

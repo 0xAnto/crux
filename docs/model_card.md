@@ -120,10 +120,10 @@ Counterfactual paired accuracy on test synthetic (higher is better): A 0.481, B 
 
 The negative result:
 
-- No architecture is reliably better than A on test synthetic (unseen rules). B equals A (difference -0.004, the 95% CI includes 0).
+- No architecture is reliably better than A on test synthetic (unseen rules). B equals A on unseen_rule_accuracy (difference -0.004, the 95% CI includes 0) and is 0.009 lower on counterfactual paired accuracy (the CI is below 0).
 - All other models are reliably worse than A. D is 0.198 lower than A.
 - On counterfactual paired accuracy, all models are reliably lower than A.
-- No model is materially above the majority baseline on BoardgameQA, DynaBench, or Super-NaturalInstructions.
+- Against the majority baseline, the models are 0.006 below to 0.006 above on BoardgameQA, 0.009 below to 0.001 above on Super-NaturalInstructions, and 0.041 below to 0.037 above on DynaBench (543 records).
 - The models do not transfer from the synthetic data to the ProofWriter open-world sets. The gains over A on these sets come with a large seed spread. They are weak evidence.
 - A is the fastest model: p50 latency 9.53 ms on an L4 at batch size 1 (lower is better). The D family needs about 2 times this latency without a cache.
 

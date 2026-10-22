@@ -1,49 +1,36 @@
 # CRUX
 
-CRUX is a compact System 1 decision model with about 17M to 30M parameters.
-It is an open research project.
-The research hypothesis: explicit rule-conditioned computation, together with counterfactual learning, helps a small neural network generalize to unfamiliar decision tasks better than a conventional transformer classifier.
-The project compares four architectures under one pre-registered protocol:
+CRUX is a research project about small decision models.
+It tests this hypothesis: explicit rule-conditioned computation, together with counterfactual learning, helps a small encoder (about 17M parameters) decide on rules that it did not see in training, better than a standard transformer classifier.
 
-- **A, Baseline:** Ettin-17M encoder with a standard decision head.
-- **B, Rule Compiler:** A with an instruction-conditioned low-rank hypernetwork.
-- **C, Counterfactual Learning:** B with counterfactual training and a consistency loss.
-- **D, CRUX:** C with independently cacheable state and rule representations and permutation-equivariant candidate scoring.
+**The result is negative.** No CRUX architecture is reliably better than the baseline.
 
-Controls: A-param (A with the same trainable parameters as B, without conditioning), A+CF, B+CF, and two ablations of D (C+cache, C+equivariant). The external baselines are fine-tuned Ettin-32M and DeBERTa-v3-xsmall. See `goal.md` and `steps.md`.
+- Paper: `paper/main.tex` (build: `cd paper && tectonic main.tex`)
+- Weights (11 models, 3 seeds each): https://huggingface.co/0xanto/crux
+- Data: https://huggingface.co/datasets/0xanto/crux-data
 
-## Status
+## Architectures
 
-Steps 0 to 8 are complete. Step 9 (mobile optimization) is skipped. Step 10 (paper and release) is in progress.
+All models start from the Ettin-17M encoder (`jhu-clsp/ettin-encoder-17m`).
 
-| Step | Content | Status |
-|---|---|---|
-| 0 | Protocol, license checks, literature review | Complete |
-| 1 | Baseline smoke test | Complete |
-| 2 | Unified decision schema, data loaders, converters | Complete |
-| 3 | Counterfactual dataset generator | Complete |
-| 4 | Evaluation dataset and frozen splits | Complete |
-| 5 | Architecture A (official) and B | Complete |
-| 6 | Architecture C | Complete |
-| 7 | Architecture D | Complete |
-| 8 | Benchmark of all models | Complete (the external baselines are not evaluated) |
-| 9 | Mobile optimization | Skipped: no architecture is better than A, so a mobile benchmark of A measures no CRUX part |
-| 10 | Paper and release | In progress |
+| Model | Content |
+|---|---|
+| A | Ettin-17M with a standard decision head (the baseline) |
+| B | A with an instruction-conditioned low-rank hypernetwork (the rule compiler) |
+| C | B trained on counterfactual pairs, with a paraphrase consistency loss |
+| D (CRUX) | C with cacheable state and instruction representations (split encoding) and a permutation-equivariant set-attention block over the options |
+
+Controls and ablations: A-param (A with the trainable parameters of B, without conditioning), B-abl (B with hypernetwork adapters in the top 2 encoder layers), A+CF and B+CF (A and B trained on the counterfactual pairs), C+cache and C+equivariant (C with one part of D each), and D-CF (D without the counterfactual pairs and the consistency loss).
 
 ## Results
 
-The result is negative. The hypothesis is not supported.
-The project read the frozen test split one time. Each value is the mean over 3 seeds. The 95% CI covers the records, not the seeds.
+All models have the same budget: 12000 steps of 32 records, 1 hyperparameter trial, and 3 seeds (13, 42, 2026).
+Each difference to A has a 95% paired bootstrap CI over the records (10,000 resamples). A difference is reliable only if its CI excludes 0. The CI does not include the seed variance.
+The test split was evaluated one time.
 
-- No architecture is reliably better than A on the test synthetic subset (unseen rules). B equals A (difference -0.004, the CI includes 0).
-- All other models are reliably worse than A. D is 0.198 lower than A.
-- On counterfactual paired accuracy, all models are reliably lower than A.
-- No model is materially above the majority baseline on BoardgameQA, DynaBench, or Super-NaturalInstructions.
-- The models do not transfer from the synthetic data to the ProofWriter open-world sets. The seed spread is larger than most differences there.
+Accuracy, mean over 3 seeds (higher is better):
 
-Accuracy (higher is better):
-
-| Model | test synthetic | BoardgameQA | DynaBench | Super-NaturalInstructions |
+| Model | test synthetic (unseen rules) | BoardgameQA | DynaBench | Super-NaturalInstructions |
 |---|---|---|---|---|
 | majority baseline | 0.336 | 0.367 | 0.508 | 0.442 |
 | A | 0.640 | 0.373 | 0.499 | 0.440 |
@@ -51,29 +38,20 @@ Accuracy (higher is better):
 | C | 0.513 | 0.368 | 0.534 | 0.441 |
 | D | 0.442 | 0.368 | 0.510 | 0.433 |
 
-The other models, the ProofWriter sets, the calibration, and the limitations are in `steps.md` (Step 8) and in `docs/model_card.md`.
-The external baselines (Ettin-32M, DeBERTa-v3-xsmall) are not evaluated.
+- On test synthetic, B equals A on unseen_rule_accuracy (−0.004, the CI includes 0). B is 0.009 lower on counterfactual_paired_accuracy (the CI is below 0).
+- All other models are reliably worse than A on both metrics. D is 0.198 lower than A on unseen_rule_accuracy.
+- The models do not beat the majority baseline on the external benchmarks by much: BoardgameQA 0.006 below to 0.006 above, Super-NaturalInstructions 0.009 below to 0.001 above, DynaBench (543 records) 0.041 below to 0.037 above.
+- On the ProofWriter open-world sets, the models are at, near, or below the majority baseline. The seed spread is larger than most differences.
+- A is also the fastest model: 9.53 ms p50 latency at batch size 1 on an NVIDIA L4 (lower is better). D needs 19.80 ms without a cache and 11.76 ms with the state and the instruction cached.
 
-## Repository layout
+`steps.md` has the full record of each step: all tables, all CIs, the deviations from the plan, and the limitations.
 
-- `goal.md`: project goal, hypothesis, and success criterion.
-- `steps.md`: Steps 0 to 10, with the status of each step.
-- `configs/`: `protocol.yaml` (pre-registered protocol), the settings of Steps 1 to 4, and `splits_manifest.json` (the SHA-256 and counts of the frozen splits).
-- `crux/schema.py`: the decision record schema and its validator.
-- `crux/data/`: loaders and converters (RuleTaker, ProofWriter, BoardgameQA, DynaBench, Super-NaturalInstructions) and the batching code.
-- `crux/train_step1.py`: the Step 1 training script.
-- `crux/gen/`: the Step 3 generator, the independent rule engine, and the shortcut audit.
-- `crux/splits.py`: the Step 4 split freezer, the leakage check, and `load_split`.
-- `crux/metrics.py`: the evaluation metrics (`docs/metrics.md`).
-- `crux/contamination.py`: the n-gram overlap scan of the test split against the Ettin `tulu_flan` data.
-- `crux/train.py`, `crux/aggregate.py`, `crux/benchmark.py`, `crux/plots.py`: Steps 5 to 8 (training, selection and bootstrap, the benchmark, the plots).
-- `crux/colab_sweep.py`, `crux/colab_eval.py`: the Colab drivers for the training sweeps and the Step 8 benchmark.
-- `crux/release.py`: the builder of the local release folder.
-- `docs/`: `schema.md`, `generator_spec.md`, `splits.md`, `metrics.md`, `step1_report.md`, `contamination.md`, `literature_review.md`.
-- `notebooks/`: one Colab notebook per step.
-- `tests/`: unit tests.
-- `DATA_LICENSES.md`: licenses of all datasets and model weights.
-- `NOTICE`: the attributions that the third-party licenses require.
+## Deviations from the plan
+
+- The external baselines (fine-tuned Ettin-32M and DeBERTa-v3-xsmall) are not evaluated. Their code and configs are in the repository.
+- Step 9 (mobile optimization, INT8, Pixel 8) is skipped, because no architecture is better than A.
+- `configs/protocol.yaml` fixed the seeds, the metrics, and the statistics before training. The training budget (12000 steps, 1 trial) was set later, after a 6000-step pilot.
+- All runs used an NVIDIA L4 on Google Colab, not the T4 of the plan.
 
 ## Setup
 
@@ -81,129 +59,84 @@ The external baselines (Ettin-32M, DeBERTa-v3-xsmall) are not evaluated.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Training targets Google Colab with a T4 GPU. The T4 does not support bf16 or FlashAttention 2, so the code uses fp16 mixed precision and SDPA attention.
-`notebooks/` has one notebook per step. Each notebook runs on Colab.
-A clean Colab run gives the reported numbers only within the seed variance.
-
-## Usage
-
-Run the commands from the repository root.
-
-Step 1: train Ettin-17M on RuleTaker.
-
-```
-python -m crux.train_step1 --config configs/step1_ruletaker.yaml
-```
-
-Step 2: convert the datasets. Each converter writes JSONL files under `data/processed/`.
-
-```
-python -m crux.data.ruletaker
-python -m crux.data.proofwriter
-python -m crux.data.boardgameqa
-python -m crux.data.dynabench
-python -m crux.data.supernat
-```
-
-Step 2: validate a processed file, and show its batches.
-
-```
-python -m crux.schema data/processed/ruletaker/depth3/train.jsonl
-python -m crux.data.batching data/processed/ruletaker/depth3/dev.jsonl
-```
-
-Step 3: run the generator, check its labels with the independent rule engine, and audit the output for shortcuts.
-The generator writes `all.jsonl`, `theories.jsonl`, and `report.json` to `data/processed/synthetic/main/`.
-
-```
-python -m crux.gen.generator [--config configs/step3_generator.yaml] [--seed N] [--total N] [--out DIR]
-python -m crux.gen.engine check data/processed/synthetic/main/all.jsonl
-python -m crux.gen.audit data/processed/synthetic/main/
-```
-
-Step 4: build and freeze the splits, then check the files against the manifest.
-The build reads the Step 2 and Step 3 outputs and writes `data/splits/`. It stops if a hash differs from the frozen manifest.
-
-```
-python -m crux.splits build
-python -m crux.splits verify
-```
-
-Steps 5 to 7: train one model (one architecture, one trial, one seed index). The notebooks `step5_train.ipynb`, `step6_train.ipynb`, and `step7_train.ipynb` loop over all runs.
-The architectures are in `configs/step5.yaml` (A, B, B-abl, A-param), `configs/step6.yaml` (C, A+CF, B+CF), and `configs/step7.yaml` (D, C+cache, C+equivariant, D-CF).
-The aggregation selects the trial and writes the mean, the std, and the paired bootstrap CI.
-
-```
-python -m crux.train --config configs/step5.yaml --arch B --trial 0 --seed-index 0
-python -m crux.aggregate runs/step5
-```
-
-Colab drivers: `crux.colab_sweep` runs a sweep on Colab L4 VMs with the `colab` CLI. `crux.colab_eval` runs the Step 8 benchmark.
-Both drivers are restart-safe. The VMs check out a pinned commit.
-
-```
-python -m crux.colab_sweep --config configs/step5.yaml --root runs/step5
-python -m crux.colab_eval --commit <commit>
-```
-
-Step 8: `crux.colab_eval` calls `crux.benchmark --final` on the VMs. The test split needs `--final`, and the project reads it one time.
-The report and the plots come from the downloaded outputs.
-
-```
-python -m crux.benchmark --final --baselines
-python -m crux.aggregate --bench configs/step8_eval.yaml
-python -m crux.plots
-```
-
-Step 10: build the release folders `release/model` and `release/dataset`. The builder uploads nothing. The two `hf upload` commands publish them.
-
-```
-python -m crux.release
-hf upload 0xanto/crux release/model .
-hf upload 0xanto/crux-data release/dataset . --repo-type dataset
-```
-
-Run the tests.
-
-```
 pytest
 ```
 
-## Release contents
+The code uses fp16 mixed precision and SDPA attention.
+The notebooks in `notebooks/` run Steps 1, 2, 4, 5, 6, and 7 on Colab. `crux/colab_sweep.py` and `crux/colab_eval.py` run the training sweeps and the Step 8 benchmark on Colab VMs with the `colab` CLI.
 
-The weights and the data are on the Hugging Face Hub. They are not in git.
+## Load a released model
 
-- Model repo https://huggingface.co/0xanto/crux: `weights/<model>/s<k>/model.safetensors` and `config.yaml` for 11 models, 3 seeds each. The file holds the model state dict only. `README.md` is the model card (`docs/model_card.md`).
-- Dataset repo https://huggingface.co/datasets/0xanto/crux-data: the synthetic splits, the test split as one file per source (`test_synthetic.jsonl`, `test_proofwriter.jsonl`), BoardgameQA, and DynaBench, in 4 configs for `load_dataset`. For Super-NaturalInstructions, it holds the task IDs, the per-task licenses, and the record hashes only. It holds no instance. `README.md` is the dataset card (`docs/dataset_card.md`).
-- Both repos hold `NOTICE`, `LICENSE`, `DATA_LICENSES.md`, and `MANIFEST.json` (SHA-256 of every file, the split hashes, and the git commit).
+The models are not `transformers` models. They need the code of this repository.
+The model card at https://huggingface.co/0xanto/crux has a complete script. In short:
 
-## Protocol
+```python
+import yaml
+from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
+from crux.models import build_model
 
-`configs/protocol.yaml` pre-registers the protocol before any training.
-It fixes these rules:
+cfg = yaml.safe_load(open(hf_hub_download("0xanto/crux", "weights/A/s0/config.yaml")))
+model = build_model(cfg["model"])
+model.load_state_dict(load_file(hf_hub_download("0xanto/crux", "weights/A/s0/model.safetensors")))
+```
 
-- 3 seeds (13, 42, 2026) for every main configuration and every control.
-- Equal training budget, equal data, and equal hyperparameter search budget for all models.
-- All model selection uses the validation split.
-- The test split is frozen in Step 4. The project reads it once, in Step 8.
-- Each difference to A is reported with a 95% paired bootstrap CI (10,000 resamples). An improvement is reliable only if the CI excludes 0.
-- Each result reports the total and the trainable parameter count.
+## Reproduce the experiments
 
-## Data and licenses
+Run the commands from the repository root. Each step writes its outputs under `data/` or `runs/` (both are git-ignored).
 
-`DATA_LICENSES.md` records the license of each dataset and each model weight, with the official source.
-The git repository holds no processed data. The `data/` directory is git-ignored. The converters build the data from the official sources. The dataset repo on the Hugging Face Hub holds the processed data that the licenses permit.
-BoardgameQA, DynaBench, and Super-NaturalInstructions are for evaluation only. The project does not train on them.
-Super-NaturalInstructions instances are not redistributed. The release includes task IDs and hashes only.
+| Step | Command |
+|---|---|
+| 1. Smoke test on RuleTaker | `python -m crux.train_step1 --config configs/step1_ruletaker.yaml` |
+| 2. Convert the datasets | `python -m crux.data.ruletaker` (also `proofwriter`, `boardgameqa`, `dynabench`, `supernat`) |
+| 3. Generate the synthetic data | `python -m crux.gen.generator`, then `python -m crux.gen.engine check data/processed/synthetic/main/all.jsonl` and `python -m crux.gen.audit data/processed/synthetic/main/` |
+| 4. Build and verify the frozen splits | `python -m crux.splits build`, then `python -m crux.splits verify` |
+| 5 to 7. Train one run | `python -m crux.train --config configs/step5.yaml --arch B --trial 0 --seed-index 0` |
+| 5 to 7. Aggregate the runs | `python -m crux.aggregate runs/step5` |
+| 5 to 7. Run a sweep on Colab | `python -m crux.colab_sweep --config configs/step5.yaml --root runs/step5` |
+| 8. Benchmark all models | `python -m crux.colab_eval --commit <commit>`, then `python -m crux.aggregate --bench configs/step8_eval.yaml` and `python -m crux.plots` |
+| 10. Build the Hub release | `python -m crux.release`, then `hf upload 0xanto/crux release/model .` and `hf upload 0xanto/crux-data release/dataset . --repo-type dataset` |
+
+The architectures of Steps 5 to 7 are in `configs/step5.yaml` (A, B, B-abl, A-param), `configs/step6.yaml` (C, A+CF, B+CF), and `configs/step7.yaml` (D, C+cache, C+equivariant, D-CF).
+`crux.splits build` stops if a split hash differs from `configs/splits_manifest.json`.
+The test split opens only with `crux.benchmark --final`.
+A rerun gives the reported numbers within the seed variance, not bit for bit.
+
+## Repository layout
+
+| Path | Content |
+|---|---|
+| `goal.md`, `steps.md` | The goal and the record of Steps 0 to 10 |
+| `configs/` | `protocol.yaml`, the configs of each step, and `splits_manifest.json` (SHA-256 and counts of the frozen splits) |
+| `crux/schema.py`, `crux/data/` | The decision record, the converters, and the batching code |
+| `crux/gen/` | The synthetic generator, the independent rule engine, and the shortcut audit |
+| `crux/splits.py`, `crux/contamination.py` | The split freezer, the leakage check, and the n-gram scan against the Ettin pretraining data |
+| `crux/models.py`, `crux/train.py` | The architectures and the training |
+| `crux/metrics.py`, `crux/aggregate.py`, `crux/benchmark.py`, `crux/plots.py` | The metrics, the bootstrap, the benchmark, and the plots |
+| `crux/colab_sweep.py`, `crux/colab_eval.py` | The Colab drivers |
+| `crux/release.py` | The builder of the Hugging Face release |
+| `docs/` | The schema, the generator, the splits, the metrics, the contamination check, the literature review, and the Hub cards |
+| `paper/` | The paper |
+| `tests/` | The unit tests |
 
 ## License and attribution
 
-The code, the trained weights, and the synthetic counterfactual dataset are released under the Apache-2.0 license. See `LICENSE`.
-`NOTICE` has the full attributions. In short:
+The code, the trained weights, and the synthetic data have the Apache-2.0 license (`LICENSE`).
+`NOTICE` gives the attributions of the third-party parts:
 
-- ProofWriter is licensed under CC BY 4.0. The release contains records derived from it. Cite Tafjord et al. (2021).
-- Ettin (`jhu-clsp/ettin-encoder-17m`) is licensed under the MIT license. The weights start from it. `NOTICE` keeps its copyright notice.
-- BoardgameQA (CC BY) and DynaBench (MIT) records are in the release with attribution.
-- Super-NaturalInstructions instances are not in the release. Each task has its own instance license (`DATA_LICENSES.md`).
+- The weights start from Ettin-17M (MIT).
+- The data release contains records from ProofWriter (CC BY 4.0), RuleTaker (Apache-2.0), BoardgameQA (CC BY), and DynaBench (MIT).
+- The release does not contain Super-NaturalInstructions instances. It has the task IDs and the record hashes only, because each task has its own instance license.
+
+`DATA_LICENSES.md` records the license check of each source.
+
+## Citation
+
+```bibtex
+@misc{ranjith2026crux,
+  author       = {Antony Ranjith F.},
+  title        = {Does Rule Conditioning Help a 17M Encoder Decide on Unseen Rules? A Negative Result for the {CRUX} Architectures},
+  year         = {2026},
+  howpublished = {\url{https://github.com/0xAnto/crux}}
+}
+```
