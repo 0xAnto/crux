@@ -192,19 +192,6 @@ def aggregate(root, metric="unseen_rule_accuracy", ref="A"):
     return out
 
 
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("root", nargs="?")
-    ap.add_argument("--bench", metavar="CONFIG", help="Step 8: write the benchmark report of configs/step8_eval.yaml")
-    ap.add_argument("--metric", default="unseen_rule_accuracy")
-    ap.add_argument("--ref", default="A", help="the reference architecture of the paired bootstrap")
-    args = ap.parse_args()
-    if args.bench:
-        bench_report(args.bench)
-    else:
-        aggregate(args.root, args.metric, args.ref)
-
-
 # ---------------------------------------------------------------- Step 8: the benchmark report
 
 LOWER = ("ece",)
@@ -322,3 +309,16 @@ def bench_text(res):
             out += [f"| {lv['group']} | {lv['n']} | {lv['majority_baseline']:.3f} | " + " | ".join(f"{lv['models'][n]['metrics']['accuracy'][0]:.3f}" for n in names) + " |"
                     for lv in lvs]
     return "\n".join(out) + "\n"
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("root", nargs="?")
+    ap.add_argument("--bench", metavar="CONFIG", help="Step 8: write the benchmark report of configs/step8_eval.yaml")
+    ap.add_argument("--metric", default="unseen_rule_accuracy")
+    ap.add_argument("--ref", default="A", help="the reference architecture of the paired bootstrap")
+    args = ap.parse_args()
+    if args.bench:
+        bench_report(args.bench)
+    else:
+        aggregate(args.root, args.metric, args.ref)

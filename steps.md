@@ -339,11 +339,11 @@ Cache size, fp16, mean over the distinct validation items (lower is better): 37.
 
 ## Step 8: Benchmark All Models
 
-- [ ] Evaluate A, A-param, A+CF, B, B+CF, C, D, the two ablations of D, and the external baselines on the frozen test split. Evaluate also on RuleTaker, ProofWriter, BoardgameQA, DynaBench, and the Super-NaturalInstructions held-out classification tasks (only the benchmarks that pass the Step 0 license check).
-- [ ] Use one evaluation script and one protocol for all models.
-- [ ] Generate comparison tables and plots for accuracy, paired counterfactual accuracy, calibration, generalization, and latency. Write the better direction in each table title, for example "(higher is better)".
-- [ ] Add 95% CIs and the paired bootstrap test for each comparison with A.
-- [ ] Apply the criteria from Step 0. Report all results, including the comparisons where the CI includes 0.
+- [x] Evaluate A, A-param, A+CF, B, B+CF, C, D, the two ablations of D, and the external baselines on the frozen test split. Evaluate also on RuleTaker, ProofWriter, BoardgameQA, DynaBench, and the Super-NaturalInstructions held-out classification tasks (only the benchmarks that pass the Step 0 license check). Deviation: the external baselines are not evaluated (scope set by the user; see below).
+- [x] Use one evaluation script and one protocol for all models.
+- [x] Generate comparison tables and plots for accuracy, paired counterfactual accuracy, calibration, generalization, and latency. Write the better direction in each table title, for example "(higher is better)".
+- [x] Add 95% CIs and the paired bootstrap test for each comparison with A.
+- [x] Apply the criteria from Step 0. Report all results, including the comparisons where the CI includes 0.
 
 **Carry-over from earlier steps:**
 - Limitations: A, B, C, and D share the Ettin initialization, so a contamination affects them equally. DeBERTa-v3-xsmall has different pretraining data (Step 1).
@@ -356,6 +356,117 @@ Cache size, fp16, mean over the distinct validation items (lower is better): 37.
 - `depth5` holds 10 questions of depth 6 or 7. `meta.depth` records them (Step 4).
 - The sentence frames and names of `depth5` occur in the Ettin pretraining data (the max 8-gram share of a kept record is 0.10). State this for `depth5` and for all Ettin-based models. The Super-NaturalInstructions benchmark is not scanned: report it as "possibly seen in pretraining", or scan it first with `crux.contamination` (Step 4).
 - The held-out sets are the open-world versions (True / False / Unknown) from the ProofWriter release, because the synthetic training data has 3 classes. Compare them only with published open-world results (ProofWriter, Tafjord et al. 2021). Do not compare them with the closed-world RuleTaker results (Clark et al. 2020). The test split has no closed-world RuleTaker set (Step 4).
+
+**Done (2026-10-22, minimum scope):**
+- Scope (the user's choice, "Minimum, ~3 h"): evaluate the 33 existing runs (11 models × 3 seeds) on the test split and on the 3 benchmarks. Deviation from the protocol: the external baselines (Ettin-32M and DeBERTa-v3-xsmall, 3 seeds each) are not trained and not evaluated. Their code and configurations exist (`configs/step8_baselines.yaml`, `configs/step8_deberta_data.yaml`), so they can run later. Jev: not evaluated (no API access). RuleTaker: the test split has no closed-world RuleTaker set (Step 4), so the ProofWriter open-world sets stand in for it.
+- One script for all models: `crux/benchmark.py`. `Data.get` is the only reader of the test split, and it needs `--final`. The test split was read one time, in this run. The evaluation limits are the same for all models (`configs/step8_eval_data.yaml`: `max_length` 5600, `max_state_length` 2400, `max_instruction_length` 5500). 0 records are truncated in all sets.
+- Run: 2 Colab L4 VMs, 2026-10-22 09:11 to 10:26, commit `b1948bb`. 33 of 33 runs and the baselines are complete, and no VM was lost. 3.8 compute units (22.16 before, 18.37 after). Each run needs about 2.5 to 3 minutes (test: 42,221 records in 86 to 105 s). The first launch failed before any evaluation (no upload worked, see `b1948bb`), so the test split was not read in that launch.
+- Check: the validation values of this script agree with the Step 7 record (D 0.4514, D − A = −0.2100 [−0.2176, −0.2026]).
+- Output (not in git, `runs/` is ignored): `runs/step8/benchmark.txt` and `benchmark.json` (all tables, all CIs, the per-subset and per-task values), `runs/step8/eval/<model>/s<k>/bench.json` and `probs_<set>.npz`, `runs/step8/eval/baselines.json`, and 5 plots in `runs/step8/plots` (accuracy, ECE, generalization, paired accuracy, latency against accuracy).
+
+Accuracy, mean ± std over 3 seeds (higher is better). ▲ = the 95% paired bootstrap CI of the difference to A is above 0, ▼ = below 0, no mark = the CI includes 0:
+
+| Model | test synthetic | test depth5 | test birds_electricity | test pararules | BoardgameQA | DynaBench | Super-NaturalInstructions |
+|---|---|---|---|---|---|---|---|
+| n | 10,086 | 18,857 | 5,270 | 8,008 | 15,000 | 543 | 4,100 |
+| majority baseline | 0.336 | 0.429 | 0.748 | 0.500 | 0.367 | 0.508 | 0.442 |
+| A | 0.640 ± 0.049 | 0.406 ± 0.091 | 0.552 ± 0.134 | 0.509 ± 0.004 | 0.373 ± 0.005 | 0.499 ± 0.030 | 0.440 ± 0.007 |
+| A-param | 0.552 ± 0.156 ▼ | 0.443 ± 0.058 ▲ | 0.705 ± 0.056 ▲ | 0.489 ± 0.026 ▼ | 0.374 ± 0.008 | 0.495 ± 0.092 | 0.435 ± 0.002 |
+| A+CF | 0.522 ± 0.142 ▼ | 0.391 ± 0.039 ▼ | 0.548 ± 0.303 | 0.509 ± 0.042 | 0.362 ± 0.012 ▼ | 0.546 ± 0.067 ▲ | 0.436 ± 0.003 |
+| B | 0.636 ± 0.056 | 0.452 ± 0.005 ▲ | 0.666 ± 0.225 ▲ | 0.503 ± 0.003 ▼ | 0.367 ± 0.000 ▼ | 0.475 ± 0.014 | 0.434 ± 0.000 |
+| B-abl | 0.573 ± 0.177 ▼ | 0.384 ± 0.065 ▼ | 0.673 ± 0.078 ▲ | 0.503 ± 0.022 ▼ | 0.366 ± 0.004 ▼ | 0.529 ± 0.032 ▲ | 0.437 ± 0.002 |
+| B+CF | 0.485 ± 0.104 ▼ | 0.402 ± 0.090 | 0.763 ± 0.016 ▲ | 0.499 ± 0.012 ▼ | 0.367 ± 0.005 ▼ | 0.467 ± 0.024 ▼ | 0.442 ± 0.004 |
+| C | 0.513 ± 0.068 ▼ | 0.447 ± 0.033 ▲ | 0.669 ± 0.191 ▲ | 0.508 ± 0.014 | 0.368 ± 0.001 ▼ | 0.534 ± 0.049 ▲ | 0.441 ± 0.005 |
+| C+cache | 0.433 ± 0.079 ▼ | 0.421 ± 0.024 ▲ | 0.587 ± 0.301 ▲ | 0.455 ± 0.102 ▼ | 0.370 ± 0.004 | 0.514 ± 0.011 | 0.442 ± 0.003 |
+| C+equivariant | 0.559 ± 0.092 ▼ | 0.449 ± 0.033 ▲ | 0.681 ± 0.040 ▲ | 0.511 ± 0.012 | 0.368 ± 0.002 ▼ | 0.496 ± 0.022 | 0.441 ± 0.003 |
+| D | 0.442 ± 0.062 ▼ | 0.368 ± 0.086 ▼ | 0.771 ± 0.024 ▲ | 0.498 ± 0.033 ▼ | 0.368 ± 0.004 ▼ | 0.510 ± 0.024 | 0.433 ± 0.006 |
+| D-CF | 0.404 ± 0.051 ▼ | 0.343 ± 0.040 ▼ | 0.410 ± 0.228 ▼ | 0.494 ± 0.011 ▼ | 0.369 ± 0.004 | 0.479 ± 0.055 | 0.443 ± 0.002 |
+
+The test majority baselines use the train label as the reference. The benchmark majority baselines use the labels of each benchmark. The fact-count probe (trained on the orig binary records of train, higher is better): test 0.380 (n 1,707), validation 0.387, dev_id 0.460.
+
+Test synthetic, the counterfactual metrics, mean over 3 seeds (higher is better):
+
+| Model | counterfactual_paired_accuracy | paraphrase_consistency |
+|---|---|---|
+| A | 0.481 ± 0.062 | 0.758 ± 0.042 |
+| A-param | 0.374 ± 0.191 ▼ | 0.702 ± 0.064 |
+| A+CF | 0.339 ± 0.171 ▼ | 0.721 ± 0.050 |
+| B | 0.472 ± 0.076 ▼ | 0.743 ± 0.056 |
+| B-abl | 0.397 ± 0.214 ▼ | 0.694 ± 0.140 |
+| B+CF | 0.290 ± 0.123 ▼ | 0.679 ± 0.087 |
+| C | 0.327 ± 0.071 ▼ | 0.679 ± 0.048 |
+| C+cache | 0.229 ± 0.080 ▼ | 0.762 ± 0.044 |
+| C+equivariant | 0.386 ± 0.109 ▼ | 0.692 ± 0.016 |
+| D | 0.241 ± 0.073 ▼ | 0.667 ± 0.050 |
+| D-CF | 0.199 ± 0.057 ▼ | 0.700 ± 0.033 |
+
+The bootstrap is for the accuracy metrics only, so the paraphrase_consistency column has no marks. Differences to A on test synthetic (higher is better): D − A = −0.198 [−0.206, −0.191] for unseen_rule_accuracy and −0.240 [−0.250, −0.230] for counterfactual_paired_accuracy. B − A = −0.004 [−0.010, +0.001] and −0.009 [−0.016, −0.001]. C+equivariant − A = −0.081 [−0.088, −0.075] and −0.095 [−0.103, −0.087].
+
+ECE on test synthetic, mean over 3 seeds (lower is better): A 0.075, A-param 0.102, A+CF 0.052, B 0.098, B-abl 0.107, B+CF 0.067, C 0.067, C+cache 0.036, C+equivariant 0.081, D 0.065, D-CF 0.074. The ECE of the other sets is in `benchmark.txt`.
+
+Latency on the L4 at batch size 1, p50 from the training runs (lower is better): A 9.53 ms, A+CF 9.81, B 10.68, C 10.78, B+CF 10.92, C+equivariant 11.12, B-abl 11.93, A-param 14.37, D 19.80, C+cache 19.98, D-CF 20.25 (D with the state and the instruction cached: 11.76, Step 7). Parameters (total = trainable): A and A+CF 16,863,745; B, B+CF, C, and C+cache 17,146,945; A-param 17,146,625; C+equivariant, D, and D-CF 17,410,625; B-abl 18,744,385.
+
+Test synthetic, counterfactual_paired_accuracy per edit type and orig label, mean over 3 seeds (higher is better). Only the cells with n ≥ 40 units are shown. `exception_remove` (69 units) and `priority_swap` (53 units) are too small to report per type:
+
+| Edit type / orig | n | A | B | C | C+equivariant | D | D-CF |
+|---|---|---|---|---|---|---|---|
+| fact_flip / True | 211 | 0.796 | 0.776 | 0.675 | 0.719 | 0.425 | 0.359 |
+| fact_flip / False | 218 | 0.742 | 0.708 | 0.602 | 0.680 | 0.430 | 0.381 |
+| fact_flip / Unknown | 69 | 0.787 | 0.739 | 0.614 | 0.652 | 0.517 | 0.420 |
+| fact_flip / multi_choice | 862 | 0.616 | 0.610 | 0.376 | 0.456 | 0.225 | 0.166 |
+| fact_remove / True | 345 | 0.705 | 0.719 | 0.559 | 0.629 | 0.397 | 0.299 |
+| fact_remove / False | 375 | 0.730 | 0.689 | 0.591 | 0.645 | 0.404 | 0.327 |
+| fact_remove / Unknown | 107 | 0.604 | 0.567 | 0.539 | 0.564 | 0.505 | 0.402 |
+| fact_remove / multi_choice | 193 | 0.389 | 0.361 | 0.197 | 0.278 | 0.140 | 0.114 |
+| condition_negate / True | 345 | 0.351 | 0.338 | 0.135 | 0.200 | 0.097 | 0.100 |
+| condition_negate / False | 312 | 0.366 | 0.347 | 0.151 | 0.262 | 0.104 | 0.136 |
+| condition_negate / Unknown | 636 | 0.525 | 0.529 | 0.316 | 0.398 | 0.279 | 0.172 |
+| condition_negate / multi_choice | 166 | 0.231 | 0.331 | 0.183 | 0.235 | 0.145 | 0.153 |
+| rule_remove / True | 98 | 0.361 | 0.344 | 0.143 | 0.197 | 0.088 | 0.156 |
+| rule_remove / False | 106 | 0.292 | 0.343 | 0.164 | 0.252 | 0.091 | 0.154 |
+| rule_remove / multi_choice | 48 | 0.299 | 0.285 | 0.229 | 0.222 | 0.139 | 0.215 |
+| threshold_shift / True | 157 | 0.176 | 0.146 | 0.146 | 0.119 | 0.138 | 0.149 |
+| threshold_shift / False | 163 | 0.200 | 0.149 | 0.117 | 0.149 | 0.119 | 0.170 |
+| threshold_shift / Unknown | 98 | 0.211 | 0.241 | 0.235 | 0.211 | 0.259 | 0.156 |
+| fact_number / multi_choice | 236 | 0.168 | 0.134 | 0.113 | 0.129 | 0.123 | 0.114 |
+| fact_number / True, False, Unknown | 46 to 54 | 0.135 to 0.203 | 0.111 to 0.206 | 0.058 to 0.191 | 0.086 to 0.156 | 0.130 to 0.177 | 0.057 to 0.136 |
+
+Test depth5, accuracy per question depth, mean over 3 seeds (higher is better). The per-depth majority baseline is not in the output:
+
+| Depth | n | A | A-param | B | C | C+equivariant | D | D-CF |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 5,774 | 0.355 | 0.364 | 0.402 | 0.360 | 0.388 | 0.404 | 0.264 |
+| 1 | 4,247 | 0.343 | 0.389 | 0.381 | 0.376 | 0.391 | 0.351 | 0.278 |
+| 2 | 2,730 | 0.431 | 0.464 | 0.478 | 0.480 | 0.479 | 0.355 | 0.376 |
+| 3 | 2,249 | 0.467 | 0.535 | 0.535 | 0.544 | 0.528 | 0.352 | 0.426 |
+| 4 | 1,990 | 0.495 | 0.556 | 0.544 | 0.574 | 0.543 | 0.346 | 0.458 |
+| 5 | 1,857 | 0.507 | 0.550 | 0.536 | 0.579 | 0.536 | 0.354 | 0.470 |
+| 6 and 7 | 10 | too few to report | | | | | | |
+
+Results against the Step 0 criteria ("reliable" = the CI of the difference to A excludes 0):
+- The primary result: on test synthetic (unseen rules), no model is reliably better than A. B is equal to A (−0.004, CI includes 0). All other models are reliably worse. D is 0.198 lower than A. This repeats the validation result of Steps 5 to 7.
+- On counterfactual_paired_accuracy (test synthetic), all models are reliably lower than A. B is the nearest (−0.009).
+- ProofWriter open-world sets: the reliable gains over A on depth5 and birds_electricity come with a large seed spread (for example, birds_electricity: A 0.552 ± 0.134, B 0.666 ± 0.225, C+cache 0.587 ± 0.301). The bootstrap CI covers the records, not the seeds, so these gains are weak evidence. Only B+CF (0.763) and D (0.771) are above the birds_electricity majority (0.748), by at most 0.023. On depth5, B, C, C+equivariant, and A-param are 0.014 to 0.023 above the majority (0.429), and the other 7 models are below it. On pararules, all models are at the majority (0.455 to 0.511 against 0.500).
+- These ProofWriter values are far below the published open-world ProofWriter results (Tafjord et al. 2021). The models do not transfer from the synthetic generator to the ProofWriter text. Compare them only with open-world results.
+- External benchmarks: no model is materially above the majority baseline. BoardgameQA: all models are 0.362 to 0.374 against 0.367, and all 15 subsets are at their majority. Super-NaturalInstructions: 0.433 to 0.443 against 0.442, and no difference to A is reliable. DynaBench: 0.467 to 0.546 against 0.508. A+CF, C, and B-abl are reliably above A (+0.047, +0.036, +0.030), but A is below the majority, the seed spread is large (A+CF ± 0.067), and n = 543. Thus these are not evidence of a transfer.
+- Option-order invariance on test (a fixed random permutation): the mean argmax agreement is 0.993 to 1.000 for each model and subset. The lowest value is C+cache on birds_electricity (0.993 ± 0.012). On validation, the agreement is 1.000 for all runs (Step 7). The cause of the small test difference (fp16 on the L4, or near-tied scores on longer inputs) is not examined.
+- Calibration: no model is best on all sets. On test synthetic, C+cache has the lowest ECE (0.036), and A has 0.075.
+- Latency: A is the fastest model and the most accurate on test synthetic. The D family needs about 2 times the latency of A without a cache.
+
+**Limitations:**
+- No external baselines (Ettin-32M, DeBERTa-v3-xsmall), because of the scope. Thus there is no comparison with a model that has different pretraining. Jev is not evaluated (no API access).
+- All 11 models share the Ettin-17M initialization, so a contamination affects them equally. The sentence frames and names of `depth5` occur in the Ettin pretraining data (max 8-gram share 0.10). Super-NaturalInstructions is not scanned: treat it as "possibly seen in pretraining".
+- DynaBench has 543 records, so its CIs are wide.
+- 3 seeds, 1 trial, and 12000 steps for every model. The bootstrap CI covers the record sample only, not the seed variance. On the ProofWriter sets the seed spread is larger than most differences.
+- The ProofWriter sets are open-world (True / False / Unknown). Compare them only with published open-world results, not with the closed-world RuleTaker results (Clark et al. 2020).
+- The per-depth majority baseline of depth5 is not computed. Thus the rise of the accuracy from depth 0 to depth 5 has no reference. Depths 6 and 7 have 10 questions.
+- The count of the multi-choice rule-edit pairs per composition (Step 3 carry-over) is not in the output. The test synthetic multi-choice rule-edit pairs are: `condition_negate` 166, `rule_remove` 48, `threshold_shift` 26, `priority_swap` 2, `exception_remove` 0. The split per composition (test: c18, c28, c31) is still open.
+
+**Notes from the run:**
+- Files: `crux/benchmark.py`, `crux/colab_eval.py`, `crux/plots.py`, `configs/step8_eval.yaml`, `configs/step8_eval_data.yaml`, the `--bench` report in `crux/aggregate.py`, and the baseline code (`configs/step8_baselines.yaml`, a non-ModernBERT path for architecture A in `crux/models.py`). 399 tests pass.
+- Two driver bugs stopped the first launch before any evaluation: `colab upload` does not make the parent folders, and the start command had wrong quotes (fixed in `b1948bb`).
+- `python -m crux.aggregate --bench` failed at the end of the run, because the `__main__` block came before the definition of `bench_report`. The block is now at the end of the file. The report and the plots were then made on the Mac from the downloaded outputs.
+- The validation values on the CPU (fp32) differ from the L4 (fp16) by at most 0.0016 (a sample of 1,906 records: A 0, C 3 flips, D 0.001).
 
 ## Step 9: Optimize for Mobile
 
